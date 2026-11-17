@@ -1,6 +1,7 @@
 package main
 
 import (
+	"PVClient/pvclient"
 	"context"
 	"errors"
 	"flag"
@@ -17,7 +18,7 @@ func run(ctx context.Context) error {
 	if *address == "" || flag.NArg() == 0 {
 		return errors.New("usage: go run . -addr host:port [-big] [-resend] 'command' ['command' ...]")
 	}
-	client, err := NewPVClient(*address, Options{BigData: *big, ResendAfterReconnect: *resend})
+	client, err := pvclient.NewPVClient(*address, pvclient.Options{BigData: *big, ResendAfterReconnect: *resend})
 	if err != nil {
 		return err
 	}
@@ -32,7 +33,7 @@ func run(ctx context.Context) error {
 	}
 	fmt.Println(reply)
 
-	var futures []*Future
+	var futures []*pvclient.Future
 	for _, command := range flag.Args()[1:] {
 		future, err := client.AskTxtAsync(ctx, command)
 		if err != nil {

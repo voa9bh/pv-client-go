@@ -1,4 +1,4 @@
-package main
+package pvclient
 
 import (
 	"encoding/binary"
