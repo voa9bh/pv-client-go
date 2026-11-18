@@ -157,3 +157,34 @@ func TestChildrenCanceled(t *testing.T) {
 		t.Fatalf("cancellation lost: %v", err)
 	}
 }
+
+func TestNextChildSingleCheck(t *testing.T) {
+	for _, test := range []struct {
+		reply string
+		id    int64
+		bad   bool
+	}{
+		{reply: "0", id: 0},
+		{reply: " 12\n", id: 12},
+		{reply: "-12", id: -12},
+		{reply: "invalid", bad: true},
+		{reply: "9223372036854775808", bad: true},
+		{reply: "-1", bad: true},
+		{reply: "-9", bad: true},
+	} {
+		t.Run(test.reply, func(t *testing.T) {
+			calls := 0
+			client := &fakeClient{ask: func(_ context.Context, command string) (string, error) {
+				calls++
+				if command != "#-1.getNextChildObject(0)" {
+					t.Fatalf("unexpected command %q", command)
+				}
+				return test.reply, nil
+			}}
+			id, err := nextChild(context.Background(), client, object{id: -1}, 0, map[int64]bool{-9: true})
+			if calls != 1 || (err != nil) != test.bad || (!test.bad && id != test.id) {
+				t.Fatalf("got ID %d, error %v, calls %d", id, err, calls)
+			}
+		})
+	}
+}

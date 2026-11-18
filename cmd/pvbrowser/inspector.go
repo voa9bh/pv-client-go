@@ -17,6 +17,7 @@ const (
 	treeResult resultKind = iota
 	metadataResult
 	commandResult
+	probeResult
 )
 
 type memberSelection struct {

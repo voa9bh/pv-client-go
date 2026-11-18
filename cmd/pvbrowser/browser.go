@@ -29,24 +29,28 @@ const (
 
 type branch struct {
 	object
-	node     *tview.TreeNode
-	parent   *branch
-	state    loadState
-	revision uint64
-	cancel   context.CancelFunc
+	node        *tview.TreeNode
+	parent      *branch
+	state       loadState
+	revision    uint64
+	cancel      context.CancelFunc
+	childKnown  bool
+	hasChildren bool
+	probeErr    error
 }
 
 type result struct {
-	kind       resultKind
-	sequence   uint64
-	info       metadata
-	text       string
-	command    string
-	generation uint64
-	target     *branch // nil means connection result
-	revision   uint64
-	children   []object
-	err        error
+	kind        resultKind
+	sequence    uint64
+	info        metadata
+	text        string
+	command     string
+	generation  uint64
+	target      *branch // nil means connection result
+	revision    uint64
+	children    []object
+	err         error
+	hasChildren bool
 }
 
 type logBuffer struct {
@@ -155,14 +159,25 @@ func (b *browser) label(n *branch) {
 	}
 	switch n.state {
 	case unloaded:
-		name += " [+]"
+		switch {
+		case n.probeErr != nil:
+			name += " [check failed - r to retry]"
+		case !n.childKnown:
+			name += " [checking...]"
+		case n.hasChildren:
+			name += " [+]"
+		default:
+			name += " [ ]"
+		}
 	case loading:
 		name += " [loading...]"
 	case failed:
 		name += " [error/stale - r to retry]"
 	case loaded:
 		if len(n.node.GetChildren()) == 0 {
-			name += " [empty]"
+			name += " [ ]"
+		} else {
+			name += " [+]"
 		}
 	}
 	// TreeView interprets color tags even when TextViews use plain text.
@@ -180,6 +195,10 @@ func (b *browser) invalidate(n *branch) {
 	if n.cancel != nil {
 		n.cancel()
 		n.cancel = nil
+		if n.state == unloaded {
+			n.probeErr = context.Canceled
+			b.label(n)
+		}
 	}
 	n.revision++
 	if n.state == loading {
@@ -232,6 +251,50 @@ func (b *browser) connect(reconnect bool) {
 	}()
 }
 
+func ancestorsOf(n *branch) map[int64]bool {
+	ancestors := make(map[int64]bool)
+	for p := n; p != nil; p = p.parent {
+		if !p.root {
+			ancestors[p.id] = true
+		}
+	}
+	return ancestors
+}
+
+func (b *browser) probeChildren(nodes []*branch) {
+	type check struct {
+		result
+		ctx       context.Context
+		cancel    context.CancelFunc
+		object    object
+		ancestors map[int64]bool
+	}
+	checks := make([]check, 0, len(nodes))
+	for _, n := range nodes {
+		ctx, cancel := context.WithCancel(b.ctx)
+		n.cancel = cancel
+		checks = append(checks, check{
+			result: result{kind: probeResult, generation: b.generation, target: n, revision: n.revision},
+			ctx:    ctx, cancel: cancel, object: n.object, ancestors: ancestorsOf(n),
+		})
+	}
+	if len(checks) == 0 {
+		return
+	}
+	b.workers.Add(1)
+	go func() {
+		defer b.workers.Done()
+		for _, c := range checks {
+			ctx, cancel := context.WithTimeout(c.ctx, 30*time.Second)
+			id, err := nextChild(ctx, b.client, c.object, 0, c.ancestors)
+			cancel()
+			c.cancel()
+			c.result.hasChildren, c.result.err = id != 0, err
+			b.post(c.result)
+		}
+	}()
+}
+
 func (b *browser) load(n *branch) {
 	if !b.ready {
 		b.setStatus("Not ready; R connects/reconnects")
@@ -248,12 +311,7 @@ func (b *browser) load(n *branch) {
 	ctx, cancel := context.WithTimeout(b.ctx, 30*time.Second)
 	n.cancel = cancel
 	generation, revision := b.generation, n.revision
-	ancestors := make(map[int64]bool)
-	for p := n; p != nil; p = p.parent {
-		if !p.root {
-			ancestors[p.id] = true
-		}
-	}
+	ancestors := ancestorsOf(n)
 	// Copy immutable input before starting the worker.
 	parent := n.object
 	b.workers.Add(1)
@@ -267,6 +325,24 @@ func (b *browser) load(n *branch) {
 
 func (b *browser) apply(r result) {
 	if r.generation != b.generation {
+		return
+	}
+	if r.kind == probeResult {
+		n := r.target
+		if n.revision != r.revision || n.state != unloaded {
+			return
+		}
+		n.cancel = nil
+		n.probeErr = r.err
+		if r.err != nil {
+			b.setStatus("Child check failed: " + r.err.Error() + "; r retries")
+		} else {
+			n.childKnown, n.hasChildren = true, r.hasChildren
+			if !r.hasChildren {
+				n.state = loaded
+			}
+		}
+		b.label(n)
 		return
 	}
 	if r.kind != treeResult {
@@ -306,13 +382,18 @@ func (b *browser) apply(r result) {
 		b.invalidate(child.GetReference().(*branch))
 	}
 	n.node.ClearChildren()
+	var nodes []*branch
 	for _, o := range r.children {
-		n.node.AddChild(b.makeBranch(o, n).node)
+		child := b.makeBranch(o, n)
+		n.node.AddChild(child.node)
+		nodes = append(nodes, child)
 	}
 	n.state = loaded
+	n.childKnown, n.hasChildren, n.probeErr = true, len(nodes) > 0, nil
 	b.label(n)
 	b.setStatus(fmt.Sprintf("Loaded %d children of %s (last operation)", len(r.children), n.address()))
 	b.showDetails(b.selected())
+	b.probeChildren(nodes)
 }
 
 func (b *browser) selected() *branch {

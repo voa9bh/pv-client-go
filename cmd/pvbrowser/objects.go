@@ -27,28 +27,39 @@ func (o object) address() string {
 	return "#" + strconv.FormatInt(o.id, 10)
 }
 
+func nextChild(ctx context.Context, client textClient, parent object, previous int64, ancestors map[int64]bool) (int64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	command := fmt.Sprintf("%s.getNextChildObject(%d)", parent.address(), previous)
+	reply, err := client.AskTxtContext(ctx, command)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", command, err)
+	}
+	id, err := strconv.ParseInt(strings.TrimSpace(reply), 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%s: invalid object ID %q: %w", command, reply, err)
+	}
+	if id != 0 && (ancestors[id] || (!parent.root && id == parent.id)) {
+		return 0, fmt.Errorf("%s: repeated or cyclic object ID %d", command, id)
+	}
+	return id, nil
+}
+
 func children(ctx context.Context, client textClient, parent object, ancestors map[int64]bool) ([]object, error) {
 	var result []object
 	seen := make(map[int64]bool)
 	previous := int64(0)
 	for {
-		if err := ctx.Err(); err != nil {
+		id, err := nextChild(ctx, client, parent, previous, ancestors)
+		if err != nil {
 			return nil, err
-		}
-		command := fmt.Sprintf("%s.getNextChildObject(%d)", parent.address(), previous)
-		reply, err := client.AskTxtContext(ctx, command)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", command, err)
-		}
-		id, err := strconv.ParseInt(strings.TrimSpace(reply), 10, 64)
-		if err != nil {
-			return nil, fmt.Errorf("%s: invalid object ID %q: %w", command, reply, err)
 		}
 		if id == 0 {
 			return result, nil
 		}
-		if seen[id] || ancestors[id] || (!parent.root && id == parent.id) {
-			return nil, fmt.Errorf("%s: repeated or cyclic object ID %d", command, id)
+		if seen[id] {
+			return nil, fmt.Errorf("%s.getNextChildObject(%d): repeated or cyclic object ID %d", parent.address(), previous, id)
 		}
 		seen[id] = true
 		name, err := client.AskTxtContext(ctx, fmt.Sprintf("#%d.name", id))

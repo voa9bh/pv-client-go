@@ -144,7 +144,9 @@ func TestBrowserNavigationCachingAndEmpty(t *testing.T) {
 		return "", fmt.Errorf("unexpected command %q", command)
 	}}
 	ui := startBrowser(t, client)
-	ui.wait(t, func(s snapshot) bool { return s.states["/pvServer"] == loaded })
+	ui.wait(t, func(s snapshot) bool {
+		return s.states["/pvServer"] == loaded && strings.Contains(s.nodes["#-1"], tview.Escape("[+]"))
+	})
 	ui.key(tcell.KeyDown, 0)
 	s := ui.wait(t, func(s snapshot) bool { return s.selected == "#-1" })
 	if !strings.Contains(s.details, "/pvServer/procs[red]") || strings.Contains(s.details, "procs[red]\n") {
@@ -164,15 +166,19 @@ func TestBrowserNavigationCachingAndEmpty(t *testing.T) {
 	ui.wait(t, func(s snapshot) bool { return s.expanded["#-1"] })
 	ui.key(tcell.KeyDown, 0)
 	ui.wait(t, func(s snapshot) bool { return s.selected == "#-2" })
+	ui.wait(t, func(s snapshot) bool { return strings.Contains(s.nodes["#-2"], tview.Escape("[ ]")) })
 	ui.key(tcell.KeyRight, 0)
-	ui.wait(t, func(s snapshot) bool { return strings.Contains(s.nodes["#-2"], tview.Escape("[empty]")) })
+	ui.wait(t, func(s snapshot) bool { return strings.Contains(s.nodes["#-2"], tview.Escape("[ ]")) })
 	ui.key(tcell.KeyLeft, 0)
 	ui.key(tcell.KeyLeft, 0)
 	ui.wait(t, func(s snapshot) bool { return s.selected == "#-1" })
 	mu.Lock()
 	defer mu.Unlock()
-	if counts["#-1.getNextChildObject(0)"] != 1 {
+	if counts["#-1.getNextChildObject(0)"] != 2 {
 		t.Fatal("expanding cached children caused another request")
+	}
+	if counts["#-2.getNextChildObject(0)"] != 1 {
+		t.Fatal("expanding a known leaf caused another request")
 	}
 }
 
@@ -235,7 +241,10 @@ func TestBrowserInitialFailureAndRetry(t *testing.T) {
 func TestBrowserStaleResultsAndRefreshInvalidation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	b := newBrowser(ctx, &fakeClient{}, "test:5002", new(logBuffer))
+	b := newBrowser(ctx, &fakeClient{ask: func(context.Context, string) (string, error) {
+		return "0", nil
+	}}, "test:5002", new(logBuffer))
+	defer func() { b.cancel(); b.workers.Wait() }()
 	old := b.root
 	b.ready = true
 	b.apply(result{generation: b.generation, target: old, revision: old.revision, children: []object{{id: -1, name: "a"}}})
@@ -279,5 +288,150 @@ func TestBrowserQuitDuringLoad(t *testing.T) {
 	case <-canceled:
 	case <-time.After(3 * time.Second):
 		t.Fatal("quit did not cancel pending request")
+	}
+}
+
+func TestBrowserImmediateChildChecks(t *testing.T) {
+	release := make(chan struct{})
+	var mu sync.Mutex
+	counts := make(map[string]int)
+	client := &fakeClient{ask: func(ctx context.Context, command string) (string, error) {
+		mu.Lock()
+		counts[command]++
+		mu.Unlock()
+		if command == "#-1.getNextChildObject(0)" {
+			select {
+			case <-release:
+				return "", errors.New("check unavailable")
+			case <-ctx.Done():
+				return "", ctx.Err()
+			}
+		}
+		replies := map[string]string{
+			"/pvServer.getNextChildObject(0)":  "-1",
+			"#-1.name":                         "broken",
+			"/pvServer.getNextChildObject(-1)": "2",
+			"#2.name":                          "leaf",
+			"/pvServer.getNextChildObject(2)":  "-3",
+			"#-3.name":                         "parent",
+			"/pvServer.getNextChildObject(-3)": "0",
+			"#2.getNextChildObject(0)":         "0",
+			"#-3.getNextChildObject(0)":        "-20",
+		}
+		if reply, ok := replies[command]; ok {
+			return reply, nil
+		}
+		return "", fmt.Errorf("unexpected command %q", command)
+	}}
+	ui := startBrowser(t, client)
+	ui.wait(t, func(s snapshot) bool {
+		return strings.Contains(s.nodes["#-1"], tview.Escape("[checking...]")) &&
+			strings.Contains(s.nodes["#2"], tview.Escape("[checking...]")) &&
+			strings.Contains(s.nodes["#-3"], tview.Escape("[checking...]"))
+	})
+	mu.Lock()
+	premature := counts["#2.getNextChildObject(0)"]
+	mu.Unlock()
+	if premature != 0 {
+		t.Fatal("sibling checks ran concurrently")
+	}
+	close(release)
+	s := ui.wait(t, func(s snapshot) bool {
+		return strings.Contains(s.nodes["#-1"], "check failed") &&
+			strings.Contains(s.nodes["#2"], tview.Escape("[ ]")) &&
+			strings.Contains(s.nodes["#-3"], tview.Escape("[+]"))
+	})
+	if len(s.nodes) != 4 || s.expanded["#-3"] {
+		t.Fatal("existence check loaded or expanded descendants")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(counts) != 10 {
+		t.Fatalf("unexpected enumeration or name request: %v", counts)
+	}
+	for _, command := range []string{"#-1.getNextChildObject(0)", "#2.getNextChildObject(0)", "#-3.getNextChildObject(0)"} {
+		if counts[command] != 1 {
+			t.Fatalf("expected exactly one probe: %v", counts)
+		}
+	}
+}
+
+func TestBrowserLeafRefreshDiscoversChildren(t *testing.T) {
+	var checks atomic.Int32
+	client := &fakeClient{ask: func(_ context.Context, command string) (string, error) {
+		switch command {
+		case "/pvServer.getNextChildObject(0)":
+			return "-1", nil
+		case "/pvServer.getNextChildObject(-1)", "#-1.getNextChildObject(2)", "#2.getNextChildObject(0)":
+			return "0", nil
+		case "#-1.name":
+			return "initially empty", nil
+		case "#-1.getNextChildObject(0)":
+			if checks.Add(1) == 1 {
+				return "0", nil
+			}
+			return "2", nil
+		case "#2.name":
+			return "new child", nil
+		default:
+			return "", fmt.Errorf("unexpected command %q", command)
+		}
+	}}
+	ui := startBrowser(t, client)
+	ui.wait(t, func(s snapshot) bool { return strings.Contains(s.nodes["#-1"], tview.Escape("[ ]")) })
+	ui.key(tcell.KeyDown, 0)
+	ui.wait(t, func(s snapshot) bool { return s.selected == "#-1" })
+	ui.key(tcell.KeyRune, 'r')
+	ui.wait(t, func(s snapshot) bool {
+		return strings.Contains(s.nodes["#-1"], tview.Escape("[+]")) &&
+			strings.Contains(s.nodes["#2"], tview.Escape("[ ]"))
+	})
+	if checks.Load() != 2 {
+		t.Fatalf("unexpected child checks: %d", checks.Load())
+	}
+}
+
+func TestBrowserProbeCancellationAndStaleResults(t *testing.T) {
+	started := make(chan struct{})
+	client := &fakeClient{ask: func(ctx context.Context, _ string) (string, error) {
+		close(started)
+		<-ctx.Done()
+		return "", ctx.Err()
+	}}
+	b := newBrowser(context.Background(), client, "test:5002", new(logBuffer))
+	defer func() { b.cancel(); b.workers.Wait() }()
+	n := b.makeBranch(object{id: -1}, b.root)
+	b.root.node.AddChild(n.node)
+	b.probeChildren([]*branch{n})
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("probe did not start")
+	}
+	revision := n.revision
+	b.invalidate(n)
+	select {
+	case r := <-b.results:
+		if !errors.Is(r.err, context.Canceled) {
+			t.Fatalf("probe was not canceled: %v", r.err)
+		}
+		b.apply(r)
+	case <-time.After(time.Second):
+		t.Fatal("probe cancellation did not finish")
+	}
+	if n.childKnown {
+		t.Fatal("obsolete canceled probe changed availability")
+	}
+	n.state = loaded
+	b.label(n)
+	for _, r := range []result{
+		{kind: probeResult, generation: b.generation, target: n, revision: revision, hasChildren: true},
+		{kind: probeResult, generation: b.generation, target: n, revision: n.revision, hasChildren: true},
+		{kind: probeResult, generation: b.generation - 1, target: n, revision: n.revision, hasChildren: true},
+	} {
+		b.apply(r)
+		if !strings.Contains(n.node.GetText(), tview.Escape("[ ]")) {
+			t.Fatal("late probe overwrote a newer load or generation")
+		}
 	}
 }

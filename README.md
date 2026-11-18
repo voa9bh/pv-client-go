@@ -108,7 +108,13 @@ The browser connects in the background and initially loads `/pvServer`'s direct
 children. It enumerates each parent with `getNextChildObject(0)`, then
 `getNextChildObject(previousID)` until zero, fetching each name via `#ID.name`.
 Nested lookups use `#parentID`, including negative IDs. The root has no invented
-numeric ID. Children appear in server order and are loaded only when expanded.
+numeric ID. Children appear in server order. Each newly listed object gets one
+background `getNextChildObject(0)` check: `[+]` means it has children, `[ ]`
+means it is empty, and checking/errors have explicit indicators. These read-only
+checks do not enumerate grandchildren; full child lists are loaded only when
+expanded. Known-empty objects need no extra request on expansion. Indicators
+reflect the last check; use `r` to discover later changes. Loaded nonempty
+branches retain `[+]` when expanded or collapsed.
 
 | Key | Action |
 |---|---|

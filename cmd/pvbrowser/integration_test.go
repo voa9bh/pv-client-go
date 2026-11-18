@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gdamore/tcell/v2"
+	"github.com/rivo/tview"
 )
 
 func TestBrowserWithTCPClient(t *testing.T) {
@@ -35,8 +36,10 @@ func TestBrowserWithTCPClient(t *testing.T) {
 			{command: "#-1.name\x00", reply: "procs\x00"},
 			{command: "/pvServer.getNextChildObject(-1)\x00", reply: "0\x00"},
 			{command: "#-1.getNextChildObject(0)\x00", reply: "-2\x00"},
+			{command: "#-1.getNextChildObject(0)\x00", reply: "-2\x00"},
 			{command: "#-2.name\x00", reply: "leaf\x00"},
 			{command: "#-1.getNextChildObject(-2)\x00", reply: "0\x00"},
+			{command: "#-2.getNextChildObject(0)\x00", reply: "0\x00"},
 			{command: "#-2.value\x00", reply: "123\x00"},
 		}
 		// Literal standard framing keeps this independent of private client helpers.
@@ -126,7 +129,9 @@ func TestBrowserWithTCPClient(t *testing.T) {
 	}
 	t.Cleanup(func() { client.Close() })
 	ui := startBrowser(t, client)
-	ui.wait(t, func(s snapshot) bool { return s.states["/pvServer"] == loaded })
+	ui.wait(t, func(s snapshot) bool {
+		return s.states["/pvServer"] == loaded && strings.Contains(s.nodes["#-1"], tview.Escape("[+]"))
+	})
 	ui.key(tcell.KeyDown, 0)
 	ui.wait(t, func(s snapshot) bool { return s.selected == "#-1" })
 	ui.key(tcell.KeyRight, 0)
@@ -137,6 +142,7 @@ func TestBrowserWithTCPClient(t *testing.T) {
 		t.Fatalf("unexpected leaf details: %q", s.details)
 	}
 	ui.wait(t, func(s snapshot) bool { return s.selected == "#-2" && s.metadataLoaded })
+	ui.wait(t, func(s snapshot) bool { return strings.Contains(s.nodes["#-2"], tview.Escape("[ ]")) })
 	ui.key(tcell.KeyTab, 0)
 	ui.wait(t, func(s snapshot) bool { return s.memberFocus })
 	ui.key(tcell.KeyRune, 'g')
