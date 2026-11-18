@@ -15,20 +15,28 @@ import (
 )
 
 type snapshot struct {
-	nodes      map[string]string
-	states     map[string]loadState
-	expanded   map[string]bool
-	selected   string
-	details    string
-	status     string
-	rendered   string
-	generation uint64
-	connecting bool
+	command, response, inspectorText                          string
+	metadataLoaded, methods, sending, commandFocus, sendFocus bool
+	class                                                     int64
+	nodes                                                     map[string]string
+	states                                                    map[string]loadState
+	expanded                                                  map[string]bool
+	selected                                                  string
+	details                                                   string
+	status                                                    string
+	rendered                                                  string
+	generation                                                uint64
+	connecting                                                bool
 }
 
 func capture(b *browser) snapshot {
 	s := snapshot{
-		nodes: make(map[string]string), states: make(map[string]loadState), expanded: make(map[string]bool),
+		command: b.command.GetText(), response: b.response.GetText(false),
+		metadataLoaded: b.inspectTarget != nil && !b.inspectLoading,
+		methods:        b.methodsTab, sending: b.sending, class: b.info.class,
+		commandFocus: b.command.HasFocus(), sendFocus: b.send.HasFocus(),
+		inspectorText: b.memberDetails.GetText(false),
+		nodes:         make(map[string]string), states: make(map[string]loadState), expanded: make(map[string]bool),
 		selected: b.selected().address(), details: b.details.GetText(false), status: b.status.GetText(false),
 		generation: b.generation, connecting: b.connecting,
 	}

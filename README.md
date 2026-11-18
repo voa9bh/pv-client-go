@@ -8,7 +8,7 @@ executables.
 ```text
 main.go          command-line request example
 pvclient/        shared socket client, protocol, and tests
-cmd/pvbrowser/   read-only tview object browser
+cmd/pvbrowser/   tview object browser, metadata inspector, and command editor
 ```
 
 Run against your server with commands appropriate for that system:
@@ -90,15 +90,19 @@ reconnection uses the same policy.
 ## Terminal object browser
 
 ```sh
-go run ./cmd/pvbrowser -addr localhost:5002
+go run ./cmd/pvbrowser localhost 5002
 # Optional BigData negotiation:
-go run ./cmd/pvbrowser -addr localhost:5002 -big
+go run ./cmd/pvbrowser -big localhost 5002
+# Built executable:
+pvbrowser localhost 5002
 ```
 
 In GoLand, create a **Go Build** run configuration with **Run kind: Package**,
 target `PVClient/cmd/pvbrowser`, and program arguments
-`-addr localhost:5002`. Do not put `.` or `go run` in program arguments.
-The original CLI remains runnable with `go run .`.
+`localhost 5002`. Do not put `.` or `go run` in program arguments.
+The browser no longer accepts `-addr`; optional flags precede host/port.
+IPv6 is supported, for example `pvbrowser ::1 5002`.
+The original CLI keeps its `-addr` syntax and remains runnable with `go run .`.
 
 The browser connects in the background and initially loads `/pvServer`'s direct
 children. It enumerates each parent with `getNextChildObject(0)`, then
@@ -108,13 +112,50 @@ numeric ID. Children appear in server order and are loaded only when expanded.
 
 | Key | Action |
 |---|---|
-| Up / Down | Select an object |
-| Enter | Expand/collapse; load children on first expansion |
-| Right | Expand/load selected object |
-| Left | Collapse, or select its parent if already collapsed |
-| `r` | Reload selected children, discarding cached descendants on success |
-| `R` | Reconnect and rebuild from the root, discarding cached IDs |
-| `q` / Ctrl+C | Cancel outstanding work and quit |
+| Tab / Shift+Tab | Cycle tree, member table, command, Send, response |
+| F2 | Switch Properties / Methods |
+| F3 | Focus scrollable member details; Tab returns to command |
+| Up / Down in tree | Select an object |
+| Enter in tree | Expand/collapse; load children on first expansion |
+| Right / Left in tree | Expand/load, or collapse/select parent |
+| `r` in tree | Reload selected children and metadata |
+| `R` in tree | Reconnect and rebuild, discarding cached IDs |
+| Up / Down in member table | Select a member and prefill its command |
+| Enter in member table | Prefill command and focus editor (does not execute) |
+| Enter in command field | Focus Send (does not execute) |
+| Enter / Space on Send | Execute the edited command once |
+| `q` in tree / Ctrl+C anywhere | Cancel outstanding work and quit |
+
+The right column fetches the selected object's `.classHandle`, then
+`.getPropertyInfos(classHandle)` and `.getMethodInfos(classHandle)`.
+Properties show handle, name, description, security, dimension, and datatype;
+methods show handle, name, description, security, request format, and response
+format. Full member details are scrollable using F3 and arrow/Page keys.
+The six count-prefixed lists are parsed without dropping empty format strings.
+Malformed lists are reported explicitly; the Java text format does not escape
+semicolons embedded in descriptions, so ambiguous metadata cannot be reliably
+recovered. A failed list does not hide a successful other list.
+
+Selecting a property prefills `#ID.propertyName`; append `=newValue` to write.
+Selecting a method prefills `#ID.methodName()`; enter parameters between the
+parentheses, for example `#-1.methodName(parameter1,parameter2)`.
+The root uses `/pvServer` instead of an ID. The entire command remains editable,
+so `/pvServer/path/to/object.propertyName=newValue` also works. String quotes
+are optional as supported by the server; the editor does not reinterpret or
+automatically quote values.
+
+**Send can modify the server or invoke destructive methods.** Merely browsing,
+selecting a row, or editing does not execute the command. No client-side security
+level enforcement or automatic property-value polling is added. Only Send
+executes; requests are not replayed after reconnect. A failed/canceled request
+may already have taken effect on the server. Reconnect/quit cancels the local
+wait, not execution on the server. After commands that change the object tree,
+use `r` or `R` explicitly; commands are never rerun as part of refreshing.
+
+The response pane retains the submitted command and success/error response,
+including empty results. Another Send is disabled while one is pending.
+Changing objects clears the command field so an old target is not reused
+accidentally. Letters such as `q`, `r`, and `R` are ordinary text in the editor.
 
 The details pane shows the selected name, ID address, and constructed path.
 Paths are informational, not filesystem paths; names containing `/` or other
@@ -131,9 +172,9 @@ Client logs appear in the diagnostics pane instead of overwriting the terminal.
 Status reflects the **last browser operation**, not live connection monitoring.
 The client still automatically reconnects after socket loss, but a server restart
 may invalidate cached IDs: use `R` to rebuild. Interrupted queries are not resent
-automatically. There is no command console, property editor, polling, or eager
-whole-server scan; the browser reads names/children only, in addition to the
-client's normal `!context off` and optional `!big on` initialization.
+automatically. Browsing and metadata queries remain read-only, in addition to the
+client's normal `!context off` and optional `!big on` initialization; explicitly
+submitted commands are not restricted to read-only operations.
 
 Build each executable separately (both are named `main` internally):
 
@@ -166,8 +207,9 @@ future. The server must support futureID multiplexing.
 
 Local mock TCP tests verify framing and lifecycle behavior; a real PVServer is
 needed to establish interoperability with your specific target. Browser tests
-use a simulated terminal to exercise keyboard navigation, lazy loading, errors,
-refresh/reconnect, and cancellation without requiring an interactive terminal.
+use a simulated terminal to exercise keyboard navigation, metadata, explicit
+command submission, lazy loading, errors, refresh/reconnect, and cancellation
+without requiring an interactive terminal.
 
 ```sh
 go test -race ./...

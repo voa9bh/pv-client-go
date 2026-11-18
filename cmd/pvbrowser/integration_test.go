@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -36,9 +37,11 @@ func TestBrowserWithTCPClient(t *testing.T) {
 			{command: "#-1.getNextChildObject(0)\x00", reply: "-2\x00"},
 			{command: "#-2.name\x00", reply: "leaf\x00"},
 			{command: "#-1.getNextChildObject(-2)\x00", reply: "0\x00"},
+			{command: "#-2.value\x00", reply: "123\x00"},
 		}
 		// Literal standard framing keeps this independent of private client helpers.
-		for _, step := range script {
+		for index := 0; index < len(script); {
+			step := script[index]
 			var header [8]byte
 			if _, err := io.ReadFull(conn, header[:]); err != nil {
 				serverResult <- err
@@ -54,14 +57,24 @@ func TestBrowserWithTCPClient(t *testing.T) {
 				serverResult <- err
 				return
 			}
-			if string(payload) != step.command {
+			reply := step.reply
+			switch {
+			case strings.HasSuffix(string(payload), ".classHandle\x00"):
+				reply = "181\x00"
+			case strings.Contains(string(payload), ".getPropertyInfos("):
+				reply = oneProperty + "\x00"
+			case strings.Contains(string(payload), ".getMethodInfos("):
+				reply = oneMethod + "\x00"
+			case string(payload) == step.command:
+				index++
+			default:
 				serverResult <- fmt.Errorf("command %q, want %q", payload, step.command)
 				return
 			}
 			header[0], header[3] = 2, 1
-			binary.LittleEndian.PutUint16(header[6:], uint16(len(step.reply)))
+			binary.LittleEndian.PutUint16(header[6:], uint16(len(reply)))
 			// Split replies into bytes to exercise incremental socket reads too.
-			wire := append(header[:], []byte(step.reply)...)
+			wire := append(header[:], []byte(reply)...)
 			for _, b := range wire {
 				if _, err := conn.Write([]byte{b}); err != nil {
 					serverResult <- err
@@ -70,7 +83,26 @@ func TestBrowserWithTCPClient(t *testing.T) {
 			}
 		}
 		serverResult <- nil
-		io.Copy(io.Discard, conn)
+		// Continue answering selection-driven metadata after enumeration.
+		for {
+			var header [8]byte
+			if _, err := io.ReadFull(conn, header[:]); err != nil {
+				return
+			}
+			payload := make([]byte, binary.LittleEndian.Uint16(header[6:]))
+			if _, err := io.ReadFull(conn, payload); err != nil {
+				return
+			}
+			reply := "0;0;0;0;0;0\x00"
+			if strings.HasSuffix(string(payload), ".classHandle\x00") {
+				reply = "181\x00"
+			}
+			header[0], header[3] = 2, 1
+			binary.LittleEndian.PutUint16(header[6:], uint16(len(reply)))
+			if _, err := conn.Write(append(header[:], []byte(reply)...)); err != nil {
+				return
+			}
+		}
 	}()
 	t.Cleanup(func() {
 		listener.Close()
@@ -104,4 +136,11 @@ func TestBrowserWithTCPClient(t *testing.T) {
 	if s.details != "Name: leaf\nAddress: #-2\nPath (informational): /pvServer/procs/leaf" {
 		t.Fatalf("unexpected leaf details: %q", s.details)
 	}
+	ui.wait(t, func(s snapshot) bool { return s.selected == "#-2" && s.metadataLoaded })
+	ui.key(tcell.KeyTab, 0)
+	ui.wait(t, func(s snapshot) bool { return s.command == "#-2.value" })
+	ui.key(tcell.KeyEnter, 0)
+	ui.key(tcell.KeyEnter, 0)
+	ui.key(tcell.KeyEnter, 0)
+	ui.wait(t, func(s snapshot) bool { return strings.Contains(s.response, "Result:\n123") })
 }

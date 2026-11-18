@@ -37,6 +37,11 @@ type branch struct {
 }
 
 type result struct {
+	kind       resultKind
+	sequence   uint64
+	info       metadata
+	text       string
+	command    string
 	generation uint64
 	target     *branch // nil means connection result
 	revision   uint64
@@ -66,6 +71,7 @@ func (b *logBuffer) snapshot() string {
 }
 
 type browser struct {
+	inspector
 	app        *tview.Application
 	tree       *tview.TreeView
 	details    *tview.TextView
@@ -104,12 +110,19 @@ func newBrowser(parent context.Context, client browserClient, address string, lo
 	b.tree.SetBorder(true).SetTitle(" Objects ")
 	b.details.SetBorder(true).SetTitle(" Selected object ")
 	b.logView.SetBorder(true).SetTitle(" Client diagnostics (latest) ")
-	layout := tview.NewFlex().SetDirection(tview.FlexRow).
+	b.initInspector()
+	columns := tview.NewFlex().
 		AddItem(b.tree, 0, 1, true).
+		AddItem(b.inspectorLayout, 0, 2, false)
+	layout := tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(columns, 0, 1, true).
 		AddItem(b.details, 5, 0, false).
-		AddItem(b.status, 2, 0, false).
+		AddItem(b.command, 1, 0, false).
+		AddItem(b.send, 1, 0, false).
+		AddItem(b.response, 4, 0, false).
+		AddItem(b.status, 1, 0, false).
 		AddItem(b.logView, 3, 0, false).
-		AddItem(tview.NewTextView().SetText("Up/Down: navigate  Enter/Right: expand  Left: collapse/parent  r: refresh  R: reconnect  q/Ctrl+C: quit"), 2, 0, false)
+		AddItem(tview.NewTextView().SetText("Tab: focus | F2: tab | F3: member details | Tree: r/R refresh/reconnect, q quit"), 1, 0, false)
 	b.app.SetRoot(layout, true).SetFocus(b.tree)
 	b.tree.SetChangedFunc(func(node *tview.TreeNode) {
 		if branch, ok := node.GetReference().(*branch); ok {
@@ -129,6 +142,7 @@ func (b *browser) setStatus(text string) {
 func (b *browser) showDetails(n *branch) {
 	b.details.SetText(fmt.Sprintf("Name: %s\nAddress: %s\nPath (informational): %s",
 		clean(n.name), n.address(), clean(n.path)))
+	b.inspect(n, false)
 }
 
 func (b *browser) label(n *branch) {
@@ -177,6 +191,7 @@ func (b *browser) invalidate(n *branch) {
 }
 
 func (b *browser) reset() {
+	b.clearInspector()
 	if b.root != nil {
 		b.invalidate(b.root)
 	}
@@ -253,6 +268,10 @@ func (b *browser) apply(r result) {
 	if r.generation != b.generation {
 		return
 	}
+	if r.kind != treeResult {
+		b.applyInspector(r)
+		return
+	}
 	if r.target == nil {
 		b.connecting = false
 		if r.err != nil {
@@ -260,6 +279,7 @@ func (b *browser) apply(r result) {
 			return
 		}
 		b.ready = true
+		b.inspect(b.selected(), true)
 		b.load(b.root)
 		return
 	}
@@ -332,7 +352,31 @@ func (b *browser) input(event *tcell.EventKey) *tcell.EventKey {
 		b.drain()
 		return nil
 	}
-	if event.Key() == tcell.KeyCtrlC || event.Rune() == 'q' {
+	if event.Key() == tcell.KeyCtrlC {
+		b.cancel()
+		b.app.Stop()
+		return nil
+	}
+	if event.Key() == tcell.KeyTab || event.Key() == tcell.KeyBacktab {
+		b.cycleFocus(event.Key() == tcell.KeyBacktab)
+		return nil
+	}
+	if event.Key() == tcell.KeyF2 {
+		b.switchTab()
+		return nil
+	}
+	if event.Key() == tcell.KeyF3 {
+		b.app.SetFocus(b.memberDetails)
+		return nil
+	}
+	if b.send.HasFocus() && event.Key() == tcell.KeyRune && event.Rune() == ' ' {
+		b.submitCommand()
+		return nil
+	}
+	if !b.tree.HasFocus() {
+		return event
+	}
+	if event.Rune() == 'q' {
 		b.cancel()
 		b.app.Stop()
 		return nil
@@ -359,6 +403,7 @@ func (b *browser) input(event *tcell.EventKey) *tcell.EventKey {
 		b.invalidate(n)
 		n.state = unloaded
 		b.load(n)
+		b.inspect(n, true)
 		return nil
 	case 'R':
 		b.connect(true)

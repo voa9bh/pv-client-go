@@ -3,6 +3,7 @@ package main
 import (
 	"PVClient/pvclient"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -12,22 +13,23 @@ import (
 )
 
 func run(ctx context.Context) error {
-	address := flag.String("addr", "", "PVServer host:port")
-	big := flag.Bool("big", false, "negotiate and use BigData packets")
-	flag.Parse()
-	if *address == "" || flag.NArg() != 0 {
-		return fmt.Errorf("usage: go run ./cmd/pvbrowser -addr host:port [-big]")
+	address, big, err := parseArgs(os.Args[1:], os.Stderr)
+	if errors.Is(err, flag.ErrHelp) {
+		return nil
+	}
+	if err != nil {
+		return err
 	}
 	logs := new(logBuffer)
 	previous := slog.Default()
 	slog.SetDefault(slog.New(slog.NewTextHandler(logs, nil)))
 	defer slog.SetDefault(previous)
-	client, err := pvclient.NewPVClient(*address, pvclient.Options{BigData: *big})
+	client, err := pvclient.NewPVClient(address, pvclient.Options{BigData: big})
 	if err != nil {
 		return err
 	}
 	defer client.Close()
-	return newBrowser(ctx, client, *address, logs).run(nil)
+	return newBrowser(ctx, client, address, logs).run(nil)
 }
 
 func main() {

@@ -9,12 +9,23 @@ import (
 )
 
 type fakeClient struct {
+	metadata  func(context.Context, string) (string, error)
 	ask       func(context.Context, string) (string, error)
 	connect   func(context.Context) error
 	reconnect func(context.Context) error
 }
 
 func (c *fakeClient) AskTxtContext(ctx context.Context, command string) (string, error) {
+	if strings.HasSuffix(command, ".classHandle") || strings.Contains(command, ".getPropertyInfos(") ||
+		strings.Contains(command, ".getMethodInfos(") {
+		if c.metadata != nil {
+			return c.metadata(ctx, command)
+		}
+		if strings.HasSuffix(command, ".classHandle") {
+			return "181", nil
+		}
+		return "0;0;0;0;0;0", nil
+	}
 	return c.ask(ctx, command)
 }
 
