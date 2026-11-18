@@ -87,6 +87,7 @@ type browser struct {
 	pages         *tview.Pages
 	tabs          *tview.TextView
 	bar           *actionBar
+	layout        *tview.Flex
 	newClient     clientFactory
 	ownedClient   ownedBrowserClient
 	connectCancel context.CancelFunc
@@ -144,6 +145,7 @@ func newBrowser(parent context.Context, client browserClient, address string, lo
 		AddItem(b.details, 5, 0, false).
 		AddItem(b.status, 1, 0, false).
 		AddItem(b.bar, 2, 0, false)
+	b.layout = layout
 	b.app.SetRoot(layout, true).SetFocus(b.tree).EnablePaste(true).EnableMouse(true)
 	b.tree.SetChangedFunc(func(node *tview.TreeNode) {
 		if branch, ok := node.GetReference().(*branch); ok {
@@ -472,7 +474,7 @@ func (b *browser) input(event *tcell.EventKey) *tcell.EventKey {
 	}
 	if event.Key() == tcell.KeyRune && event.Modifiers() == tcell.ModNone && !b.editing() {
 		switch event.Rune() {
-		case 'q':
+		case 'Q':
 			b.quit()
 			return nil
 		case 'P':
@@ -499,6 +501,9 @@ func (b *browser) input(event *tcell.EventKey) *tcell.EventKey {
 		switch event.Rune() {
 		case 'g':
 			b.memberAction('g')
+			return nil
+		case 's':
+			b.memberAction('s')
 			return nil
 		case 'G':
 			b.toggleGlobals()
@@ -544,6 +549,8 @@ func (b *browser) run(screen tcell.Screen) error {
 	var pump sync.WaitGroup
 	started := false
 	b.app.SetBeforeDrawFunc(func(screen tcell.Screen) bool {
+		width, _ := screen.Size()
+		b.layout.ResizeItem(b.bar, b.bar.rows(width), 0)
 		if !started {
 			started = true
 			b.connect(false)

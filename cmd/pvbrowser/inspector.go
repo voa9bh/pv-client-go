@@ -261,7 +261,16 @@ func (b *browser) renderInspector() {
 			if methods {
 				name += "()"
 			}
-			b.table.SetCell(row, 0, tview.NewTableCell(tview.Escape(clean(name))).SetReference(s).SetExpansion(1))
+			cell := tview.NewTableCell(tview.Escape(clean(name))).SetReference(s).SetExpansion(1)
+			if !methods {
+				clickedRow := row
+				cell.SetClickedFunc(func() bool {
+					b.table.Select(clickedRow, 0)
+					b.memberAction('g')
+					return true
+				})
+			}
+			b.table.SetCell(row, 0, cell)
 			row++
 		}
 		if visible == 0 {
@@ -378,11 +387,17 @@ func (b *browser) memberAction(action rune) {
 	case action == 'g' && s.method:
 		b.setStatus("g reads properties only; use Enter to call a method")
 		return
-	case action != 'g' && action != '\n':
+	case action == 's' && s.method:
+		b.setStatus("s sets properties only; use Enter to call a method")
+		return
+	case action == 'c' && !s.method:
+		b.setStatus("Call requires a method; Enter gets a property, s sets it")
+		return
+	case action != 'g' && action != '\n' && action != 's' && action != 'c':
 		b.setStatus("Unknown member action")
 		return
 	}
-	if action == 'g' {
+	if action == 'g' || (action == '\n' && !s.method) {
 		b.cancelEdit()
 		b.submit(s.expression("", true))
 		return

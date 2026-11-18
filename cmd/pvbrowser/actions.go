@@ -15,6 +15,19 @@ func newActionBar() *actionBar {
 	return &actionBar{Flex: tview.NewFlex().SetDirection(tview.FlexRow)}
 }
 
+func (a *actionBar) rows(width int) int {
+	rows, used := 1, 0
+	for _, button := range a.buttons {
+		size := tview.TaggedStringWidth(button.GetLabel()) + 4
+		if used > 0 && used+size > width {
+			rows++
+			used = 0
+		}
+		used += size
+	}
+	return rows
+}
+
 func (a *actionBar) Draw(screen tcell.Screen) {
 	_, _, width, _ := a.GetRect()
 	if width != a.width {
@@ -87,13 +100,14 @@ func (b *browser) updateActions() {
 	} else {
 		add("r Refresh", b.refreshSelected)
 		add("g Get", func() { b.selectedMemberAction('g') })
-		add("Enter Edit/Call", func() { b.selectedMemberAction('\n') })
+		add("s Set", func() { b.selectedMemberAction('s') })
+		add("Enter Call", func() { b.selectedMemberAction('c') })
 		add("G Globals", b.toggleGlobals)
 	}
 	add("F2 Switch", b.switchWorkspace)
 	add("P Port", b.promptPort)
 	add("R Reconnect", func() { b.connect(true) })
-	add("q Quit", b.quit)
+	add("Q Quit", b.quit)
 	b.bar.width = -1
 }
 

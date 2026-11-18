@@ -30,7 +30,6 @@ func TestMemberShortcutScoping(t *testing.T) {
 		tcell.NewEventKey(tcell.KeyRune, 'c', tcell.ModAlt),
 		tcell.NewEventKey(tcell.KeyRune, 'c', tcell.ModCtrl),
 		tcell.NewEventKey(tcell.KeyRune, 'C', tcell.ModNone),
-		tcell.NewEventKey(tcell.KeyRune, 's', tcell.ModNone),
 		tcell.NewEventKey(tcell.KeyRune, 'c', tcell.ModNone),
 	} {
 		if got := b.input(event); got != event || b.edit != nil || b.sending {

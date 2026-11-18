@@ -196,7 +196,7 @@ func TestMacroWorkspaceEditingRunAndSwitch(t *testing.T) {
 			}
 			ui.key(tcell.KeyEnter, 0)
 			s := ui.wait(t, func(s snapshot) bool { return s.macroText == "qgrR()\n" && s.macroEditorFocus })
-			for _, label := range []string{"Macro editor", "Macro output", "F5 Run", "^O Load", "^S Save", "P Port", "q Quit"} {
+			for _, label := range []string{"Macro editor", "Macro output", "F5 Run", "^O Load", "^S Save", "P Port", "Q Quit"} {
 				if !strings.Contains(s.rendered, label) {
 					t.Fatalf("missing %q:\n%s", label, s.rendered)
 				}

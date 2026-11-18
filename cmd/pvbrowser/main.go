@@ -12,6 +12,12 @@ import (
 	"syscall"
 )
 
+func browserClientFactory(big bool) clientFactory {
+	return func(address string) (ownedBrowserClient, error) {
+		return pvclient.NewPVClient(address, pvclient.Options{BigData: big})
+	}
+}
+
 func run(ctx context.Context) error {
 	address, big, err := parseArgs(os.Args[1:], os.Stderr)
 	if errors.Is(err, flag.ErrHelp) {
@@ -24,9 +30,7 @@ func run(ctx context.Context) error {
 	previous := slog.Default()
 	slog.SetDefault(slog.New(slog.NewTextHandler(logs, nil)))
 	defer slog.SetDefault(previous)
-	factory := func(address string) (ownedBrowserClient, error) {
-		return pvclient.NewPVClient(address, pvclient.Options{BigData: big})
-	}
+	factory := browserClientFactory(big)
 	client, err := factory(address)
 	if err != nil {
 		return err

@@ -305,7 +305,7 @@ func TestBrowserQuitDuringLoad(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("load did not start")
 	}
-	ui.key(tcell.KeyRune, 'q')
+	ui.key(tcell.KeyRune, 'Q')
 	select {
 	case <-canceled:
 	case <-time.After(3 * time.Second):

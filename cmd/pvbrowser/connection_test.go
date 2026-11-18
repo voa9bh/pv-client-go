@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
+	"io"
 	"net"
 	"strings"
 	"sync/atomic"
@@ -222,7 +224,9 @@ func TestOwnedClientShutdownAndCloseError(t *testing.T) {
 	b := newBrowser(context.Background(), client, "localhost:5002", new(logBuffer))
 	b.ownedClient = client
 	screen := tcell.NewSimulationScreen("UTF-8")
-	b.app.SetAfterDrawFunc(func(tcell.Screen) { b.quit() })
+	b.app.SetAfterDrawFunc(func(tcell.Screen) {
+		b.app.QueueEvent(tcell.NewEventKey(tcell.KeyCtrlC, 0, tcell.ModNone))
+	})
 	err := b.run(screen)
 	if !errors.Is(err, client.closeError) || client.closes.Load() != 1 {
 		t.Fatalf("client cleanup error lost: %v, closes %d", err, client.closes.Load())
@@ -238,5 +242,107 @@ func TestParsePortBoundaries(t *testing.T) {
 		if _, _, err := net.SplitHostPort(net.JoinHostPort("::1", port)); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func portTestServer(t *testing.T) (string, <-chan string) {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	commands := make(chan string, 64)
+	stopped := make(chan struct{})
+	t.Cleanup(func() {
+		listener.Close()
+		select {
+		case <-stopped:
+		case <-time.After(3 * time.Second):
+			t.Error("port test server did not stop")
+		}
+	})
+	go func() {
+		defer close(stopped)
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		conn.SetDeadline(time.Now().Add(5 * time.Second))
+		for {
+			var header [10]byte
+			if _, err := io.ReadFull(conn, header[:8]); err != nil {
+				return
+			}
+			size := int(binary.LittleEndian.Uint16(header[6:8]))
+			if header[1]&1 != 0 {
+				if _, err := io.ReadFull(conn, header[8:10]); err != nil {
+					return
+				}
+				size = int(binary.LittleEndian.Uint32(header[6:10]))
+			}
+			if size > 4096 {
+				t.Error("unexpected oversized test request")
+				return
+			}
+			data := make([]byte, size)
+			if _, err := io.ReadFull(conn, data); err != nil {
+				return
+			}
+			command := strings.TrimSuffix(string(data), "\x00")
+			commands <- command
+			reply := "0"
+			switch {
+			case strings.HasPrefix(command, "!"):
+				reply = "OK"
+			case strings.HasSuffix(command, ".classHandle"):
+				reply = "181"
+			case strings.Contains(command, "Infos("):
+				reply = "0;0;0;0;0;0"
+			}
+			header[0], header[1], header[3] = 2, header[1]&2, 1
+			binary.LittleEndian.PutUint16(header[6:8], uint16(len(reply)+1))
+			if _, err := conn.Write(append(header[:8], []byte(reply+"\x00")...)); err != nil {
+				return
+			}
+		}
+	}()
+	return listener.Addr().String(), commands
+}
+
+func TestPortChangeWithProductionClientRetainsBigData(t *testing.T) {
+	firstAddress, firstCommands := portTestServer(t)
+	secondAddress, secondCommands := portTestServer(t)
+	factory := browserClientFactory(true)
+	client, err := factory(firstAddress)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := newBrowser(context.Background(), client, firstAddress, new(logBuffer))
+	b.newClient, b.ownedClient = factory, client
+	defer func() {
+		b.cancel()
+		b.closeClient(b.ownedClient)
+		b.workers.Wait()
+	}()
+	b.connect(false)
+	waitBrowserResult(t, b, func() bool { return b.ready && !b.inspectLoading && b.root.state == loaded })
+	_, port, _ := net.SplitHostPort(secondAddress)
+	b.changePort(port)
+	waitBrowserResult(t, b, func() bool { return b.ready && !b.inspectLoading && b.root.state == loaded })
+	for _, commands := range []<-chan string{firstCommands, secondCommands} {
+		for _, want := range []string{"!context off", "!big on"} {
+			select {
+			case got := <-commands:
+				if got != want {
+					t.Fatalf("initialization: got %q, want %q", got, want)
+				}
+			case <-time.After(time.Second):
+				t.Fatalf("missing initialization command %q", want)
+			}
+		}
+	}
+	if b.address != secondAddress {
+		t.Fatalf("new endpoint: %q, want %q", b.address, secondAddress)
 	}
 }

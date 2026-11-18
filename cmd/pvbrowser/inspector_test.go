@@ -53,7 +53,7 @@ func TestCombinedMemberWorkflow(t *testing.T) {
 	if got := <-commands; got != "/pvServer.value" {
 		t.Fatalf("read: %q", got)
 	}
-	ui.key(tcell.KeyEnter, 0)
+	ui.key(tcell.KeyRune, 's')
 	ui.wait(t, func(s snapshot) bool { return s.commandFocus && s.command == "" })
 	for _, r := range "qRrgGsc" {
 		ui.key(tcell.KeyRune, r)
@@ -68,7 +68,7 @@ func TestCombinedMemberWorkflow(t *testing.T) {
 	if !strings.Contains(s.response, `line 1\n[red]line 2�`) {
 		t.Fatalf("response: %q", s.response)
 	}
-	ui.key(tcell.KeyEnter, 0)
+	ui.key(tcell.KeyRune, 's')
 	ui.wait(t, func(s snapshot) bool { return s.commandFocus && s.command == "" })
 	ui.key(tcell.KeyEscape, 0)
 	ui.wait(t, func(s snapshot) bool { return s.memberFocus })
@@ -77,7 +77,7 @@ func TestCombinedMemberWorkflow(t *testing.T) {
 		t.Fatalf("Esc sent %s", command)
 	default:
 	}
-	ui.key(tcell.KeyEnter, 0)
+	ui.key(tcell.KeyRune, 's')
 	ui.key(tcell.KeyEnter, 0)
 	ui.wait(t, func(s snapshot) bool {
 		return strings.Contains(s.response, `Command: /pvServer.value=""`) && !s.sending
@@ -260,7 +260,7 @@ func TestMacrosWorkspaceCancelsEdit(t *testing.T) {
 	ui := startBrowser(t, editorClient(func(context.Context, string) (string, error) { calls.Add(1); return "", nil }))
 	ui.wait(t, func(s snapshot) bool { return s.metadataLoaded })
 	ui.key(tcell.KeyTab, 0)
-	ui.key(tcell.KeyEnter, 0)
+	ui.key(tcell.KeyRune, 's')
 	ui.wait(t, func(s snapshot) bool { return s.commandFocus })
 	ui.key(tcell.KeyF2, 0)
 	ui.wait(t, func(s snapshot) bool { return s.macros && strings.Contains(s.rendered, "Macro editor") })

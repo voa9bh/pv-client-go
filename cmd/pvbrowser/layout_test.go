@@ -14,7 +14,7 @@ func TestCompactAndWideLayout(t *testing.T) {
 		t.Run(fmt.Sprint(size), func(t *testing.T) {
 			ui := startBrowserSize(t, editorClient(func(context.Context, string) (string, error) { return "", nil }), size[0], size[1])
 			s := ui.wait(t, func(s snapshot) bool { return s.metadataLoaded && strings.Contains(s.rendered, "set()") })
-			for _, label := range []string{"[Objects]", "Macros", "Properties / Methods", "Input / Output", "Selected object", "g Get", "Enter Edit/Call", "G Globals", "P Port", "q Quit"} {
+			for _, label := range []string{"[Objects]", "Macros", "Properties / Methods", "Input / Output", "Selected object", "g Get", "s Set", "Enter Call", "G Globals", "P Port", "Q Quit"} {
 				if !strings.Contains(s.rendered, label) {
 					t.Fatalf("missing %q:\n%s", label, s.rendered)
 				}

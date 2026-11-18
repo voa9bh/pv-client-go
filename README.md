@@ -118,7 +118,7 @@ branches retain `[+]` when expanded or collapsed.
 
 | Key | Action |
 |---|---|
-| Tab / Shift+Tab | Cycle tree, member list, Result/input, Command display, shared information |
+| Tab / Shift+Tab | Cycle workspace panes and bottom action buttons |
 | F2 | Switch Objects / Macros |
 | F5 / F6 in Macros | Run once / Stop the macro |
 | Ctrl+O / Ctrl+S in Macros | Load / Save a plain-text macro file |
@@ -126,14 +126,32 @@ branches retain `[+]` when expanded or collapsed.
 | Enter in tree | Expand/collapse; load children on first expansion |
 | Right / Left in tree | Expand/load, or collapse/select parent |
 | `r` in tree | Reload selected children and metadata |
-| `R` in tree | Reconnect and rebuild, discarding cached IDs |
+| `R` outside text inputs/dialogs | Reconnect and rebuild, discarding cached IDs |
+| `P` outside text inputs/dialogs | Change port, retaining host and BigData setting |
 | Up / Down in member list | Select property/method and show its information |
 | `g` in member list | Get selected property; never invokes a method |
-| Enter in member list | Edit a blank property value or method parameters |
+| Click / Enter on a property | Get its value |
+| `s` in member list | Edit the selected property's value |
+| Enter on a method | Edit its parameters |
 | `G` in member list | Toggle inclusion of negative-handle global members |
 | Enter in input field | Submit once and immediately return to the selected member |
 | Esc in input field | Cancel editing without sending |
-| `q` in tree / Ctrl+C anywhere | Cancel outstanding work and quit |
+| `Q` outside text inputs/dialogs / Ctrl+C anywhere | Cancel outstanding work and quit |
+
+The bottom action bar shows shortcuts first and adapts to terminal width.
+Use Tab/Shift+Tab to focus its buttons, Enter to activate, or click with the mouse.
+Objects offers Refresh/Get/Set/Call/Globals; Macros offers Run/Stop/Load/Save.
+Both include Switch/Port/Reconnect/Quit. Focusing a button does not execute it.
+Lowercase `q` never quits; `Q`, `P`, `R`, and `s` remain ordinary text in editors.
+
+`P Port` opens a prompt prefilled with the current port (decimal 1..65535).
+Enter/Connect switches; Esc/Cancel leaves the connection unchanged. Switching
+cancels pending network waits and clears cached objects/metadata without
+replaying commands. The macro editor, file path, and output are retained, but
+an active macro is stopped. A sent command may already have executed.
+If connecting fails, the new port stays selected, the tree has no stale children
+and displays CONNECTION FAILED, and the information panel shows the error.
+Use `R` to retry that endpoint or `P` to choose another port.
 
 The Objects workspace has a tree on the left, a combined member list on the
 right, and an Input/Output region below that list. Properties come first;
@@ -186,8 +204,10 @@ Malformed lists are reported explicitly; the Java text format does not escape
 semicolons embedded in descriptions, so ambiguous metadata cannot be reliably
 recovered. A failed list does not hide a successful other list.
 
-Selecting a member never executes it. **g** sends `#ID.propertyName` for a
-property. **Enter** on a property or method focuses a fresh blank input: enter only
+Keyboard navigation and programmatic selection never execute a member.
+A single **mouse click**, **Enter**, or **g** on a property sends
+`#ID.propertyName` to read it. Clicking a method only selects it.
+**s** on a property or **Enter** on a method focuses a fresh blank input: enter only
 the new property value or comma-separated method parameters, not a full command. Enter constructs
 `#ID.propertyName=newValue` or `#ID.methodName(parameters)` and submits once.
 The root uses `/pvServer` instead of an ID. The selected target is captured when
@@ -196,8 +216,9 @@ nonempty input is passed verbatim. Empty property input sends `=""`, an explicit
 empty string, while empty method input sends `()`. Esc cancels an unsubmitted
 edit; F2 also abandons an edit before changing workspace.
 
-**Enter on a member followed by Enter in the input can modify the server or invoke destructive methods.**
-Merely browsing, selecting a row, or editing does not execute anything.
+**s on a property followed by Enter in the input can modify the server.
+Enter on a method followed by Enter in the input can invoke destructive methods.**
+Merely navigating with the keyboard or editing does not execute anything.
 No client-side security enforcement or automatic property-value polling is added.
 Requests are not replayed after reconnect. A failed/canceled request
 may already have taken effect on the server. Reconnect/quit cancels the local
@@ -212,9 +233,9 @@ are retained. Focus returns to the member immediately on submission,
 without blocking for a reply. Further get/set/call submissions are blocked while that
 operation is pending. Changing members/objects discards obsolete edits/results
 and cancels a pending local wait, warning that the operation may already have
-executed. These shortcuts use unmodified lowercase letters only in the member
-list; `g`, `G`, `s`, `c`, `q`, `r`, and `R` are ordinary text in the input.
-The former `s`/`c` actions and F5/F6 are no longer bound.
+executed. Member shortcuts apply only in the member list; all letter shortcuts
+are ordinary text in the input. `s` sets properties only and never calls methods;
+`g` reads properties only. F5/F6 apply only in Macros.
 F2 still switches workspaces.
 
 For object selection, the shared panel shows name, ID address, and constructed path.

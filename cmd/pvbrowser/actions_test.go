@@ -21,8 +21,12 @@ func TestQuitFromNonEditingViews(t *testing.T) {
 				"macro output": b.macroOutput, "button": b.bar.buttons[0],
 			}
 			b.app.SetFocus(views[name])
-			if b.input(tcell.NewEventKey(tcell.KeyRune, 'q', tcell.ModNone)) != nil || b.ctx.Err() == nil {
-				t.Fatal("q did not quit")
+			lower := tcell.NewEventKey(tcell.KeyRune, 'q', tcell.ModNone)
+			if b.input(lower) != lower || b.ctx.Err() != nil {
+				t.Fatal("lowercase q must not quit")
+			}
+			if b.input(tcell.NewEventKey(tcell.KeyRune, 'Q', tcell.ModNone)) != nil || b.ctx.Err() == nil {
+				t.Fatal("Q did not quit")
 			}
 		})
 	}
@@ -32,7 +36,7 @@ func TestSharedLettersRemainTextInEditorsAndDialogs(t *testing.T) {
 	b := macroBrowser(t, nil)
 	for _, editor := range []tview.Primitive{b.command, b.macroEditor} {
 		b.app.SetFocus(editor)
-		for _, r := range "qPR" {
+		for _, r := range "qQPRs" {
 			event := tcell.NewEventKey(tcell.KeyRune, r, tcell.ModNone)
 			if b.input(event) != event || b.ctx.Err() != nil || b.connecting || b.macroDialog {
 				t.Fatalf("intercepted %q while editing", r)
@@ -41,7 +45,7 @@ func TestSharedLettersRemainTextInEditorsAndDialogs(t *testing.T) {
 	}
 	b.app.SetFocus(b.details)
 	b.promptMacroFile(false)
-	for _, r := range "qPR" {
+	for _, r := range "qQPRs" {
 		event := tcell.NewEventKey(tcell.KeyRune, r, tcell.ModNone)
 		if b.input(event) != event || b.ctx.Err() != nil || b.connecting {
 			t.Fatalf("intercepted %q in a dialog", r)
@@ -85,6 +89,11 @@ func TestActionButtonsUseSelectedMember(t *testing.T) {
 	}
 	b.app.SetFocus(b.bar.buttons[3])
 	dialogKey(b, tcell.KeyEnter)
+	if b.command.HasFocus() || !strings.Contains(b.status.GetText(false), "Call requires a method") {
+		t.Fatal("Call button accepted a property")
+	}
+	b.app.SetFocus(b.bar.buttons[4])
+	dialogKey(b, tcell.KeyEnter)
 	if !b.showGlobals {
 		t.Fatal("Globals button did not toggle")
 	}
@@ -125,7 +134,7 @@ func TestActionBarFocusClicksAndResize(t *testing.T) {
 			ui.b.app.QueueUpdateDraw(func() {
 				ui.b.app.SetFocus(ui.b.details)
 			})
-			for i := 0; i < 8; i++ {
+			for i := 0; i < 9; i++ {
 				ui.key(tcell.KeyTab, 0)
 				want := i
 				ui.wait(t, func(s snapshot) bool { return s.actionFocus == want })
@@ -133,7 +142,7 @@ func TestActionBarFocusClicksAndResize(t *testing.T) {
 			ui.key(tcell.KeyTab, 0)
 			ui.wait(t, func(s snapshot) bool { return s.treeFocus })
 			ui.key(tcell.KeyBacktab, 0)
-			ui.wait(t, func(s snapshot) bool { return s.actionFocus == 7 })
+			ui.wait(t, func(s snapshot) bool { return s.actionFocus == 8 })
 			clickButton(t, ui, "F2 Switch")
 			ui.wait(t, func(s snapshot) bool { return s.macros && s.macroEditorFocus })
 			clickButton(t, ui, "^O Load")
@@ -141,11 +150,11 @@ func TestActionBarFocusClicksAndResize(t *testing.T) {
 			ui.key(tcell.KeyEscape, 0)
 			ui.wait(t, func(s snapshot) bool { return !s.macroDialog })
 			ui.b.app.QueueUpdateDraw(func() {
-				ui.screen.SetSize(80, 24)
+				ui.screen.SetSize(60, 24)
 			})
-			ui.b.app.QueueEvent(tcell.NewEventResize(80, 24))
+			ui.b.app.QueueEvent(tcell.NewEventResize(60, 24))
 			ui.wait(t, func(s snapshot) bool {
-				return strings.Contains(s.rendered, "q Quit") && strings.Contains(s.rendered, "F5 Run")
+				return strings.Contains(s.rendered, "Q Quit") && strings.Contains(s.rendered, "F5 Run")
 			})
 			clickButton(t, ui, "F2 Switch")
 			ui.wait(t, func(s snapshot) bool { return !s.macros })
@@ -158,7 +167,7 @@ func TestActionBarFocusClicksAndResize(t *testing.T) {
 func TestActionBarMouseQuit(t *testing.T) {
 	ui := startBrowser(t, editorClient(func(context.Context, string) (string, error) { return "", nil }))
 	ui.wait(t, func(s snapshot) bool { return s.metadataLoaded })
-	clickButton(t, ui, "q Quit")
+	clickButton(t, ui, "Q Quit")
 	select {
 	case <-ui.b.ctx.Done():
 	case <-time.After(time.Second):
