@@ -47,7 +47,9 @@ func TestCombinedMemberWorkflow(t *testing.T) {
 	default:
 	}
 	ui.key(tcell.KeyRune, 'g')
-	ui.wait(t, func(s snapshot) bool { return strings.Contains(s.response, "Result:") && !s.sending })
+	ui.wait(t, func(s snapshot) bool {
+		return strings.Contains(s.response, `Result: line 1\n[red]line 2�`) && !s.sending
+	})
 	if got := <-commands; got != "/pvServer.value" {
 		t.Fatalf("read: %q", got)
 	}
@@ -253,7 +255,7 @@ func TestCommandCancellationAndNoReplay(t *testing.T) {
 	}
 }
 
-func TestMacrosPlaceholderCancelsEdit(t *testing.T) {
+func TestMacrosWorkspaceCancelsEdit(t *testing.T) {
 	var calls atomic.Int32
 	ui := startBrowser(t, editorClient(func(context.Context, string) (string, error) { calls.Add(1); return "", nil }))
 	ui.wait(t, func(s snapshot) bool { return s.metadataLoaded })
@@ -261,13 +263,13 @@ func TestMacrosPlaceholderCancelsEdit(t *testing.T) {
 	ui.key(tcell.KeyEnter, 0)
 	ui.wait(t, func(s snapshot) bool { return s.commandFocus })
 	ui.key(tcell.KeyF2, 0)
-	ui.wait(t, func(s snapshot) bool { return s.macros && strings.Contains(s.rendered, "not implemented") })
+	ui.wait(t, func(s snapshot) bool { return s.macros && strings.Contains(s.rendered, "Macro editor") })
 	ui.key(tcell.KeyEnter, 0)
 	ui.key(tcell.KeyEnter, 0)
 	ui.key(tcell.KeyF2, 0)
 	ui.wait(t, func(s snapshot) bool { return !s.macros && !s.commandFocus })
 	if calls.Load() != 0 {
-		t.Fatal("placeholder executed command")
+		t.Fatal("switching workspaces or typing executed a command")
 	}
 }
 

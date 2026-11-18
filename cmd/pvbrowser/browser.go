@@ -51,6 +51,8 @@ type result struct {
 	children    []object
 	err         error
 	hasChildren bool
+	macro       macroEvent
+	file        macroFileEvent
 }
 
 type logBuffer struct {
@@ -76,12 +78,14 @@ func (b *logBuffer) snapshot() string {
 
 type browser struct {
 	inspector
+	macroWorkspace
 	app        *tview.Application
 	tree       *tview.TreeView
 	details    *tview.TextView
 	status     *tview.TextView
 	pages      *tview.Pages
 	tabs       *tview.TextView
+	help       *tview.TextView
 	macros     bool
 	lastLog    string
 	logs       *logBuffer
@@ -117,19 +121,22 @@ func newBrowser(parent context.Context, client browserClient, address string, lo
 	b.tree.SetBorder(true).SetTitle(" Objects ")
 	b.details.SetBorder(true).SetTitle(" Selected object ")
 	b.initInspector()
+	b.initMacros()
 	columns := tview.NewFlex().
 		AddItem(b.tree, 0, 1, true).
 		AddItem(b.inspectorLayout, 0, 2, false)
 	b.pages = tview.NewPages().AddPage("objects", columns, true, true).
-		AddPage("macros", tview.NewTextView().SetText("Macros: not implemented yet. F2 returns to Objects."), true, false)
+		AddPage("macros", b.macroLayout, true, false)
 	b.tabs = tview.NewTextView().SetText("[Objects] | Macros (F2)")
+	b.help = tview.NewTextView()
+	b.updateHelp()
 	layout := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(b.tabs, 1, 0, false).
 		AddItem(b.pages, 0, 1, true).
 		AddItem(b.details, 5, 0, false).
 		AddItem(b.status, 1, 0, false).
-		AddItem(tview.NewTextView().SetText("Tab: focus | F2: tab | Members: g get, Enter set/call, G globals | Tree: r/R refresh/reconnect, q quit"), 2, 0, false)
-	b.app.SetRoot(layout, true).SetFocus(b.tree)
+		AddItem(b.help, 2, 0, false)
+	b.app.SetRoot(layout, true).SetFocus(b.tree).EnablePaste(true)
 	b.tree.SetChangedFunc(func(node *tview.TreeNode) {
 		if branch, ok := node.GetReference().(*branch); ok {
 			b.showDetails(branch)
@@ -232,6 +239,7 @@ func (b *browser) connect(reconnect bool) {
 	if b.connecting {
 		return
 	}
+	b.stopMacro("Reconnect requested")
 	b.ready, b.connecting = false, true
 	b.reset()
 	b.setStatus("Connecting...")
@@ -324,6 +332,14 @@ func (b *browser) load(n *branch) {
 }
 
 func (b *browser) apply(r result) {
+	if r.kind == macroResult {
+		b.applyMacro(r)
+		return
+	}
+	if r.kind == macroFileResult {
+		b.applyMacroFile(r.file)
+		return
+	}
 	if r.generation != b.generation {
 		return
 	}
@@ -440,9 +456,13 @@ func (b *browser) input(event *tcell.EventKey) *tcell.EventKey {
 		return nil
 	}
 	if event.Key() == tcell.KeyCtrlC {
+		b.stopMacro("Quit requested")
 		b.cancel()
 		b.app.Stop()
 		return nil
+	}
+	if b.macroDialog {
+		return event
 	}
 	if event.Key() == tcell.KeyTab || event.Key() == tcell.KeyBacktab {
 		b.cycleFocus(event.Key() == tcell.KeyBacktab)
@@ -454,12 +474,13 @@ func (b *browser) input(event *tcell.EventKey) *tcell.EventKey {
 		if b.macros {
 			b.tabs.SetText("Objects | [Macros] (F2)")
 			b.pages.SwitchToPage("macros")
-			b.app.SetFocus(b.pages)
+			b.app.SetFocus(b.macroEditor)
 		} else {
 			b.tabs.SetText("[Objects] | Macros (F2)")
 			b.pages.SwitchToPage("objects")
 			b.app.SetFocus(b.tree)
 		}
+		b.updateHelp()
 		b.updateDetails()
 		return nil
 	}
@@ -478,16 +499,18 @@ func (b *browser) input(event *tcell.EventKey) *tcell.EventKey {
 		}
 	}
 	if b.macros {
-		return nil
+		return b.macroInput(event)
 	}
 	if !b.tree.HasFocus() {
 		return event
 	}
 	if event.Rune() == 'q' {
+		b.stopMacro("Quit requested")
 		b.cancel()
 		b.app.Stop()
 		return nil
 	}
+
 	n := b.selected()
 	switch event.Key() {
 	case tcell.KeyEnter:
@@ -517,6 +540,14 @@ func (b *browser) input(event *tcell.EventKey) *tcell.EventKey {
 		return nil
 	}
 	return event
+}
+
+func (b *browser) updateHelp() {
+	if b.macros {
+		b.help.SetText("Tab: focus | F2: Objects | F5: run once | F6: stop | Ctrl+O/S: load/save | Ctrl+C: quit")
+		return
+	}
+	b.help.SetText("Tab: focus | F2: tab | Members: g get, Enter set/call, G globals | Tree: r/R refresh/reconnect, q quit")
 }
 
 func (b *browser) run(screen tcell.Screen) error {

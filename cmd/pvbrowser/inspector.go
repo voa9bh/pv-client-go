@@ -18,6 +18,8 @@ const (
 	metadataResult
 	commandResult
 	probeResult
+	macroResult
+	macroFileResult
 )
 
 type memberSelection struct {
@@ -289,6 +291,11 @@ func (b *browser) selectMember(row int) {
 }
 
 func (b *browser) updateDetails() {
+	if b.macros {
+		b.details.SetTitle(" Macro mode ")
+		b.details.SetText("One nonblank line = one command; errors do not stop the run.\nEmpty responses show <ready>. Edits affect the next run.\nMacros can modify the server. Stop cancels only the local wait.")
+		return
+	}
 	n := b.selected()
 	if n == nil {
 		return
@@ -321,6 +328,7 @@ func (b *browser) updateDetails() {
 
 func (b *browser) cycleFocus(back bool) {
 	if b.macros {
+		b.cycleMacroFocus(back)
 		return
 	}
 	io := tview.Primitive(b.response)

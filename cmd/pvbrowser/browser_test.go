@@ -28,6 +28,11 @@ type snapshot struct {
 	rendered                              string
 	generation                            uint64
 	connecting                            bool
+	macroText, macroOutput, macroPath     string
+	macroRunning, macroFileBusy           bool
+	macroDialog, macroEditorFocus         bool
+	macroOutputFocus                      bool
+	macroEditorRow, macroOutputRow        int
 }
 
 func capture(b *browser) snapshot {
@@ -40,7 +45,12 @@ func capture(b *browser) snapshot {
 		nodes:         make(map[string]string), states: make(map[string]loadState), expanded: make(map[string]bool),
 		selected: b.selected().address(), details: b.details.GetText(false), status: b.status.GetText(false),
 		generation: b.generation, connecting: b.connecting,
+		macroText: b.macroEditor.GetText(), macroOutput: b.macroOutput.GetText(false), macroPath: b.macroPath,
+		macroRunning: b.macroRunning, macroFileBusy: b.macroFileBusy, macroDialog: b.macroDialog,
+		macroEditorFocus: b.macroEditor.HasFocus(), macroOutputFocus: b.macroOutput.HasFocus(),
 	}
+	s.macroEditorRow, _ = b.macroEditor.GetOffset()
+	s.macroOutputRow, _ = b.macroOutput.GetScrollOffset()
 	b.root.node.Walk(func(node, parent *tview.TreeNode) bool {
 		n := node.GetReference().(*branch)
 		s.nodes[n.address()] = node.GetText()

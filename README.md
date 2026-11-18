@@ -119,7 +119,9 @@ branches retain `[+]` when expanded or collapsed.
 | Key | Action |
 |---|---|
 | Tab / Shift+Tab | Cycle tree, member list, Result/input, Command display, shared information |
-| F2 | Switch Objects / Macros (placeholder only) |
+| F2 | Switch Objects / Macros |
+| F5 / F6 in Macros | Run once / Stop the macro |
+| Ctrl+O / Ctrl+S in Macros | Load / Save a plain-text macro file |
 | Up / Down in tree | Select an object |
 | Enter in tree | Expand/collapse; load children on first expansion |
 | Right / Left in tree | Expand/load, or collapse/select parent |
@@ -141,7 +143,35 @@ hides negative-handle globals using already loaded metadata, without another
 server query. The filter choice persists across object changes and reconnects
 for this session; zero-handle members are never actionable.
 One shared information panel below both columns follows tree or member focus.
-The Macros workspace is a placeholder with no storage or execution.
+The Macros workspace has an editable multiline macro on the left and read-only
+output on the right. Both panes scroll; Tab/Shift+Tab cycles the editor, output,
+and Run once/Stop/Load/Save buttons. Arrow and Page keys navigate the focused pane.
+F2 returns to Objects without discarding the editor, output, or a running macro.
+
+**F5 / Run once can modify the server or invoke destructive methods.** It
+snapshots the editor, clears the previous output, and sends each nonblank line
+unchanged through synchronous `AskTxtContext`, waiting for its response before
+sending the next line. Blank/whitespace-only lines are skipped; LF and CRLF files
+are supported. There is no client-side comment or scripting syntax. The UI
+remains responsive, and edits affect only the next run. Only one macro runs at
+a time. Each call has a 30-second timeout. Output shows the original line number,
+command, and multiline response; an empty response is displayed as `<ready>`.
+Errors are displayed and execution **continues with the remaining lines**.
+The completion summary includes the command and error counts.
+
+F6 / Stop prevents further commands and cancels the current local wait.
+Reconnect or quit also cancels the run. A sent command may already have executed
+on the server; cancellation cannot undo it, and commands are never replayed.
+Macro lines run sequentially, but independent browser queries may coexist.
+Macros do not automatically refresh cached objects; use `r` or `R` in Objects
+when needed.
+
+Ctrl+O / Load and Ctrl+S / Save open a filesystem path prompt. Enter submits;
+Esc cancels. Files are plain text, and the last successful path is remembered
+for this session. Loading into a nonempty editor and overwriting an existing
+file require confirmation, with Cancel selected by default. Saving writes a
+complete temporary file before publishing it; file errors leave the editor
+unchanged and appear in the status line. There is no auto-save.
 
 The browser fetches the selected object's `.classHandle`, then
 `.getPropertyInfos(classHandle)` and `.getMethodInfos(classHandle)`.
