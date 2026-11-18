@@ -24,12 +24,16 @@ func run(ctx context.Context) error {
 	previous := slog.Default()
 	slog.SetDefault(slog.New(slog.NewTextHandler(logs, nil)))
 	defer slog.SetDefault(previous)
-	client, err := pvclient.NewPVClient(address, pvclient.Options{BigData: big})
+	factory := func(address string) (ownedBrowserClient, error) {
+		return pvclient.NewPVClient(address, pvclient.Options{BigData: big})
+	}
+	client, err := factory(address)
 	if err != nil {
 		return err
 	}
-	defer client.Close()
-	return newBrowser(ctx, client, address, logs).run(nil)
+	b := newBrowser(ctx, client, address, logs)
+	b.newClient, b.ownedClient = factory, client
+	return b.run(nil)
 }
 
 func main() {

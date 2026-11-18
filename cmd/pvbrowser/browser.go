@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -79,26 +80,33 @@ func (b *logBuffer) snapshot() string {
 type browser struct {
 	inspector
 	macroWorkspace
-	app        *tview.Application
-	tree       *tview.TreeView
-	details    *tview.TextView
-	status     *tview.TextView
-	pages      *tview.Pages
-	tabs       *tview.TextView
-	help       *tview.TextView
-	macros     bool
-	lastLog    string
-	logs       *logBuffer
-	client     browserClient
-	address    string
-	ctx        context.Context
-	cancel     context.CancelFunc
-	workers    sync.WaitGroup
-	results    chan result
-	root       *branch
-	generation uint64
-	connecting bool
-	ready      bool
+	app           *tview.Application
+	tree          *tview.TreeView
+	details       *tview.TextView
+	status        *tview.TextView
+	pages         *tview.Pages
+	tabs          *tview.TextView
+	bar           *actionBar
+	newClient     clientFactory
+	ownedClient   ownedBrowserClient
+	connectCancel context.CancelFunc
+	connectionErr error
+	closeMu       sync.Mutex
+	closeErr      error
+	pendingFiles  []macroFileEvent
+	macros        bool
+	lastLog       string
+	logs          *logBuffer
+	client        browserClient
+	address       string
+	ctx           context.Context
+	cancel        context.CancelFunc
+	workers       sync.WaitGroup
+	results       chan result
+	root          *branch
+	generation    uint64
+	connecting    bool
+	ready         bool
 }
 
 func clean(text string) string {
@@ -128,15 +136,15 @@ func newBrowser(parent context.Context, client browserClient, address string, lo
 	b.pages = tview.NewPages().AddPage("objects", columns, true, true).
 		AddPage("macros", b.macroLayout, true, false)
 	b.tabs = tview.NewTextView().SetText("[Objects] | Macros (F2)")
-	b.help = tview.NewTextView()
-	b.updateHelp()
+	b.bar = newActionBar()
+	b.updateActions()
 	layout := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(b.tabs, 1, 0, false).
 		AddItem(b.pages, 0, 1, true).
 		AddItem(b.details, 5, 0, false).
 		AddItem(b.status, 1, 0, false).
-		AddItem(b.help, 2, 0, false)
-	b.app.SetRoot(layout, true).SetFocus(b.tree).EnablePaste(true)
+		AddItem(b.bar, 2, 0, false)
+	b.app.SetRoot(layout, true).SetFocus(b.tree).EnablePaste(true).EnableMouse(true)
 	b.tree.SetChangedFunc(func(node *tview.TreeNode) {
 		if branch, ok := node.GetReference().(*branch); ok {
 			b.showDetails(branch)
@@ -239,24 +247,7 @@ func (b *browser) connect(reconnect bool) {
 	if b.connecting {
 		return
 	}
-	b.stopMacro("Reconnect requested")
-	b.ready, b.connecting = false, true
-	b.reset()
-	b.setStatus("Connecting...")
-	generation := b.generation
-	b.workers.Add(1)
-	go func() {
-		defer b.workers.Done()
-		ctx, cancel := context.WithTimeout(b.ctx, 30*time.Second)
-		defer cancel()
-		var err error
-		if reconnect {
-			err = b.client.Reconnect(ctx)
-		} else {
-			err = b.client.Connect(ctx)
-		}
-		b.post(result{generation: generation, err: err})
-	}()
+	b.startConnection(reconnect)
 }
 
 func ancestorsOf(n *branch) map[int64]bool {
@@ -290,11 +281,12 @@ func (b *browser) probeChildren(nodes []*branch) {
 		return
 	}
 	b.workers.Add(1)
+	client := b.client
 	go func() {
 		defer b.workers.Done()
 		for _, c := range checks {
 			ctx, cancel := context.WithTimeout(c.ctx, 30*time.Second)
-			id, err := nextChild(ctx, b.client, c.object, 0, c.ancestors)
+			id, err := nextChild(ctx, client, c.object, 0, c.ancestors)
 			cancel()
 			c.cancel()
 			c.result.hasChildren, c.result.err = id != 0, err
@@ -322,22 +314,31 @@ func (b *browser) load(n *branch) {
 	ancestors := ancestorsOf(n)
 	// Copy immutable input before starting the worker.
 	parent := n.object
+	client := b.client
 	b.workers.Add(1)
 	go func() {
 		defer b.workers.Done()
 		defer cancel()
-		list, err := children(ctx, b.client, parent, ancestors)
+		list, err := children(ctx, client, parent, ancestors)
 		b.post(result{generation: generation, target: n, revision: revision, children: list, err: err})
 	}()
 }
 
 func (b *browser) apply(r result) {
+	if r.kind == clientCloseResult {
+		b.setStatus("Client close failed: " + r.err.Error())
+		return
+	}
 	if r.kind == macroResult {
 		b.applyMacro(r)
 		return
 	}
 	if r.kind == macroFileResult {
-		b.applyMacroFile(r.file)
+		if b.macroDialog {
+			b.pendingFiles = append(b.pendingFiles, r.file)
+		} else {
+			b.applyMacroFile(r.file)
+		}
 		return
 	}
 	if r.generation != b.generation {
@@ -367,11 +368,13 @@ func (b *browser) apply(r result) {
 	}
 	if r.target == nil {
 		b.connecting = false
+		b.connectCancel = nil
 		if r.err != nil {
-			b.setStatus("Connection failed: " + r.err.Error() + "; R to retry")
+			b.connectionFailed(r.err)
 			return
 		}
 		b.ready = true
+		b.tree.SetTitle(" Objects ")
 		b.inspect(b.selected(), true)
 		b.load(b.root)
 		return
@@ -439,6 +442,11 @@ func (b *browser) drain() {
 		case r := <-b.results:
 			b.apply(r)
 		default:
+			if !b.macroDialog && len(b.pendingFiles) > 0 {
+				event := b.pendingFiles[0]
+				b.pendingFiles = b.pendingFiles[1:]
+				b.applyMacroFile(event)
+			}
 			logs := b.logs.snapshot()
 			if logs != b.lastLog {
 				b.lastLog = logs
@@ -456,32 +464,31 @@ func (b *browser) input(event *tcell.EventKey) *tcell.EventKey {
 		return nil
 	}
 	if event.Key() == tcell.KeyCtrlC {
-		b.stopMacro("Quit requested")
-		b.cancel()
-		b.app.Stop()
+		b.quit()
 		return nil
 	}
 	if b.macroDialog {
 		return event
+	}
+	if event.Key() == tcell.KeyRune && event.Modifiers() == tcell.ModNone && !b.editing() {
+		switch event.Rune() {
+		case 'q':
+			b.quit()
+			return nil
+		case 'P':
+			b.promptPort()
+			return nil
+		case 'R':
+			b.connect(true)
+			return nil
+		}
 	}
 	if event.Key() == tcell.KeyTab || event.Key() == tcell.KeyBacktab {
 		b.cycleFocus(event.Key() == tcell.KeyBacktab)
 		return nil
 	}
 	if event.Key() == tcell.KeyF2 {
-		b.cancelEdit()
-		b.macros = !b.macros
-		if b.macros {
-			b.tabs.SetText("Objects | [Macros] (F2)")
-			b.pages.SwitchToPage("macros")
-			b.app.SetFocus(b.macroEditor)
-		} else {
-			b.tabs.SetText("[Objects] | Macros (F2)")
-			b.pages.SwitchToPage("objects")
-			b.app.SetFocus(b.tree)
-		}
-		b.updateHelp()
-		b.updateDetails()
+		b.switchWorkspace()
 		return nil
 	}
 	if !b.macros && b.table.HasFocus() && event.Key() == tcell.KeyEnter && event.Modifiers() == tcell.ModNone {
@@ -504,13 +511,6 @@ func (b *browser) input(event *tcell.EventKey) *tcell.EventKey {
 	if !b.tree.HasFocus() {
 		return event
 	}
-	if event.Rune() == 'q' {
-		b.stopMacro("Quit requested")
-		b.cancel()
-		b.app.Stop()
-		return nil
-	}
-
 	n := b.selected()
 	switch event.Key() {
 	case tcell.KeyEnter:
@@ -530,24 +530,10 @@ func (b *browser) input(event *tcell.EventKey) *tcell.EventKey {
 	}
 	switch event.Rune() {
 	case 'r':
-		b.invalidate(n)
-		n.state = unloaded
-		b.load(n)
-		b.inspect(n, true)
-		return nil
-	case 'R':
-		b.connect(true)
+		b.refreshSelected()
 		return nil
 	}
 	return event
-}
-
-func (b *browser) updateHelp() {
-	if b.macros {
-		b.help.SetText("Tab: focus | F2: Objects | F5: run once | F6: stop | Ctrl+O/S: load/save | Ctrl+C: quit")
-		return
-	}
-	b.help.SetText("Tab: focus | F2: tab | Members: g get, Enter set/call, G globals | Tree: r/R refresh/reconnect, q quit")
 }
 
 func (b *browser) run(screen tcell.Screen) error {
@@ -588,6 +574,12 @@ func (b *browser) run(screen tcell.Screen) error {
 	close(stopPump)
 	pump.Wait()
 	b.cancel()
+	if b.ownedClient != nil {
+		b.closeClient(b.ownedClient)
+		b.ownedClient = nil
+	}
 	b.workers.Wait()
-	return err
+	b.closeMu.Lock()
+	defer b.closeMu.Unlock()
+	return errors.Join(err, b.closeErr)
 }

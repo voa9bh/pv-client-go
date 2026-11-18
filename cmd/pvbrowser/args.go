@@ -24,14 +24,22 @@ func parseArgs(args []string, output io.Writer) (string, bool, error) {
 	if strings.TrimSpace(host) == "" || strings.TrimSpace(host) != host {
 		return "", false, fmt.Errorf("host must not be empty or padded with whitespace")
 	}
+	port, err := parsePort(port)
+	if err != nil {
+		return "", false, err
+	}
+	return net.JoinHostPort(host, port), *big, nil
+}
+
+func parsePort(port string) (string, error) {
 	for _, digit := range port {
 		if digit < '0' || digit > '9' {
-			return "", false, fmt.Errorf("port must be a decimal number in 1..65535")
+			return "", fmt.Errorf("port must be a decimal number in 1..65535")
 		}
 	}
 	n, err := strconv.Atoi(port)
 	if err != nil || n < 1 || n > 65535 {
-		return "", false, fmt.Errorf("port must be a decimal number in 1..65535")
+		return "", fmt.Errorf("port must be a decimal number in 1..65535")
 	}
-	return net.JoinHostPort(host, strconv.Itoa(n)), *big, nil
+	return strconv.Itoa(n), nil
 }

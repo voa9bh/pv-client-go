@@ -20,6 +20,7 @@ const (
 	probeResult
 	macroResult
 	macroFileResult
+	clientCloseResult
 )
 
 type memberSelection struct {
@@ -155,11 +156,12 @@ func (b *browser) inspect(n *branch, force bool) {
 	ctx, cancel := context.WithTimeout(b.ctx, 30*time.Second)
 	b.inspectCancel = cancel
 	generation, sequence, o := b.generation, b.inspectSequence, n.object
+	client := b.client
 	b.workers.Add(1)
 	go func() {
 		defer b.workers.Done()
 		defer cancel()
-		info, err := fetchMetadata(ctx, b.client, o)
+		info, err := fetchMetadata(ctx, client, o)
 		b.post(result{kind: metadataResult, generation: generation, sequence: sequence, info: info, err: err})
 	}()
 }
@@ -291,6 +293,11 @@ func (b *browser) selectMember(row int) {
 }
 
 func (b *browser) updateDetails() {
+	if b.connectionErr != nil {
+		b.details.SetTitle(" Connection failed ")
+		b.details.SetText(displayMultiline(b.address + "\n" + b.connectionErr.Error() + "\nR retries this port; P selects another port."))
+		return
+	}
 	if b.macros {
 		b.details.SetTitle(" Macro mode ")
 		b.details.SetText("One nonblank line = one command; errors do not stop the run.\nEmpty responses show <ready>. Edits affect the next run.\nMacros can modify the server. Stop cancels only the local wait.")
@@ -327,15 +334,7 @@ func (b *browser) updateDetails() {
 }
 
 func (b *browser) cycleFocus(back bool) {
-	if b.macros {
-		b.cycleMacroFocus(back)
-		return
-	}
-	io := tview.Primitive(b.response)
-	if b.edit != nil {
-		io = b.command
-	}
-	items := []tview.Primitive{b.tree, b.table, io, b.commandDisplay, b.details}
+	items := b.focusItems()
 	index := 0
 	for i, item := range items {
 		if item.HasFocus() {
@@ -409,6 +408,7 @@ func (b *browser) submit(command string) {
 	}
 	b.commandSequence++
 	sequence, generation := b.commandSequence, b.generation
+	client := b.client
 	ctx, cancel := context.WithTimeout(b.ctx, 30*time.Second)
 	b.commandCancel = cancel
 	b.sending = true
@@ -418,7 +418,7 @@ func (b *browser) submit(command string) {
 	go func() {
 		defer b.workers.Done()
 		defer cancel()
-		text, err := b.client.AskTxtContext(ctx, command)
+		text, err := client.AskTxtContext(ctx, command)
 		b.post(result{kind: commandResult, generation: generation, sequence: sequence, command: command, text: text, err: err})
 	}()
 }

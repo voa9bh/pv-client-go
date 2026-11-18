@@ -33,6 +33,10 @@ type snapshot struct {
 	macroDialog, macroEditorFocus         bool
 	macroOutputFocus                      bool
 	macroEditorRow, macroOutputRow        int
+	actionFocus                           int
+	treeFocus                             bool
+	address                               string
+	connectionFailed                      bool
 }
 
 func capture(b *browser) snapshot {
@@ -48,6 +52,12 @@ func capture(b *browser) snapshot {
 		macroText: b.macroEditor.GetText(), macroOutput: b.macroOutput.GetText(false), macroPath: b.macroPath,
 		macroRunning: b.macroRunning, macroFileBusy: b.macroFileBusy, macroDialog: b.macroDialog,
 		macroEditorFocus: b.macroEditor.HasFocus(), macroOutputFocus: b.macroOutput.HasFocus(),
+		actionFocus: -1, treeFocus: b.tree.HasFocus(), address: b.address, connectionFailed: b.connectionErr != nil,
+	}
+	for i, button := range b.bar.buttons {
+		if button.HasFocus() {
+			s.actionFocus = i
+		}
 	}
 	s.macroEditorRow, _ = b.macroEditor.GetOffset()
 	s.macroOutputRow, _ = b.macroOutput.GetScrollOffset()
@@ -62,9 +72,10 @@ func capture(b *browser) snapshot {
 }
 
 type runningBrowser struct {
-	b     *browser
-	views chan snapshot
-	done  chan error
+	b      *browser
+	screen tcell.SimulationScreen
+	views  chan snapshot
+	done   chan error
 }
 
 func startBrowser(t *testing.T, client browserClient) *runningBrowser {
@@ -93,6 +104,7 @@ func startBrowserSize(t *testing.T, client browserClient, width, height int) *ru
 		}
 	})
 	screen := tcell.NewSimulationScreen("UTF-8")
+	ui.screen = screen
 	b.app.SetScreen(screen)
 	screen.SetSize(width, height)
 	go func() { ui.done <- b.run(nil) }()
