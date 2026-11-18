@@ -238,7 +238,20 @@ automatically. Browsing and metadata queries remain read-only, in addition to th
 client's normal `!context off` and optional `!big on` initialization; explicitly
 submitted commands are not restricted to read-only operations.
 
-Build each executable separately (both are named `main` internally):
+With Go and Make installed, run these tasks from the project root:
+
+```sh
+make build    # Native pvbrowser and pvcli executables in bin/ (default task)
+make windows  # Windows amd64: bin/pvbrowser.exe and bin/pvcli.exe
+make test     # Run all Go tests
+```
+
+`make` alone runs `build`, targeting the host OS and architecture. The `windows`
+target cross-compiles with CGO disabled and does not require a Windows machine.
+Generated files in `bin/` are ignored by Git. Go must be on your PATH, or you can
+select it explicitly, for example `make GO=/path/to/go windows`.
+
+Without Make, build each executable separately (both are named `main` internally):
 
 ```sh
 go build -o pvcli .
