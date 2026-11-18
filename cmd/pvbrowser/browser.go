@@ -76,7 +76,10 @@ type browser struct {
 	tree       *tview.TreeView
 	details    *tview.TextView
 	status     *tview.TextView
-	logView    *tview.TextView
+	pages      *tview.Pages
+	tabs       *tview.TextView
+	macros     bool
+	lastLog    string
 	logs       *logBuffer
 	client     browserClient
 	address    string
@@ -104,25 +107,24 @@ func newBrowser(parent context.Context, client browserClient, address string, lo
 	b := &browser{
 		app: tview.NewApplication(), tree: tview.NewTreeView(),
 		details: tview.NewTextView(), status: tview.NewTextView(),
-		logView: tview.NewTextView(), logs: logs, client: client, address: address,
+		logs: logs, client: client, address: address,
 		ctx: ctx, cancel: cancel, results: make(chan result, 32),
 	}
 	b.tree.SetBorder(true).SetTitle(" Objects ")
 	b.details.SetBorder(true).SetTitle(" Selected object ")
-	b.logView.SetBorder(true).SetTitle(" Client diagnostics (latest) ")
 	b.initInspector()
 	columns := tview.NewFlex().
 		AddItem(b.tree, 0, 1, true).
 		AddItem(b.inspectorLayout, 0, 2, false)
+	b.pages = tview.NewPages().AddPage("objects", columns, true, true).
+		AddPage("macros", tview.NewTextView().SetText("Macros: not implemented yet. F2 returns to Objects."), true, false)
+	b.tabs = tview.NewTextView().SetText("[Objects] | Macros (F2)")
 	layout := tview.NewFlex().SetDirection(tview.FlexRow).
-		AddItem(columns, 0, 1, true).
+		AddItem(b.tabs, 1, 0, false).
+		AddItem(b.pages, 0, 1, true).
 		AddItem(b.details, 5, 0, false).
-		AddItem(b.command, 1, 0, false).
-		AddItem(b.send, 1, 0, false).
-		AddItem(b.response, 4, 0, false).
 		AddItem(b.status, 1, 0, false).
-		AddItem(b.logView, 3, 0, false).
-		AddItem(tview.NewTextView().SetText("Tab: focus | F2: tab | F3: member details | Tree: r/R refresh/reconnect, q quit"), 1, 0, false)
+		AddItem(tview.NewTextView().SetText("Tab: focus | F2: tab | Members: g get, s set, c call | Tree: r/R refresh/reconnect, q quit"), 2, 0, false)
 	b.app.SetRoot(layout, true).SetFocus(b.tree)
 	b.tree.SetChangedFunc(func(node *tview.TreeNode) {
 		if branch, ok := node.GetReference().(*branch); ok {
@@ -140,9 +142,8 @@ func (b *browser) setStatus(text string) {
 }
 
 func (b *browser) showDetails(n *branch) {
-	b.details.SetText(fmt.Sprintf("Name: %s\nAddress: %s\nPath (informational): %s",
-		clean(n.name), n.address(), clean(n.path)))
 	b.inspect(n, false)
+	b.updateDetails()
 }
 
 func (b *browser) label(n *branch) {
@@ -341,7 +342,12 @@ func (b *browser) drain() {
 		case r := <-b.results:
 			b.apply(r)
 		default:
-			b.logView.SetText(clean(b.logs.snapshot())).ScrollToEnd()
+			logs := b.logs.snapshot()
+			if logs != b.lastLog {
+				b.lastLog = logs
+				lines := strings.Split(strings.TrimSpace(logs), "\n")
+				b.setStatus(lines[len(lines)-1])
+			}
 			return
 		}
 	}
@@ -362,15 +368,28 @@ func (b *browser) input(event *tcell.EventKey) *tcell.EventKey {
 		return nil
 	}
 	if event.Key() == tcell.KeyF2 {
-		b.switchTab()
+		b.cancelEdit()
+		b.macros = !b.macros
+		if b.macros {
+			b.tabs.SetText("Objects | [Macros] (F2)")
+			b.pages.SwitchToPage("macros")
+			b.app.SetFocus(b.pages)
+		} else {
+			b.tabs.SetText("[Objects] | Macros (F2)")
+			b.pages.SwitchToPage("objects")
+			b.app.SetFocus(b.tree)
+		}
+		b.updateDetails()
 		return nil
 	}
-	if event.Key() == tcell.KeyF3 {
-		b.app.SetFocus(b.memberDetails)
-		return nil
+	if !b.macros && b.table.HasFocus() && event.Key() == tcell.KeyRune && event.Modifiers() == tcell.ModNone {
+		switch event.Rune() {
+		case 'g', 's', 'c':
+			b.memberAction(event.Rune())
+			return nil
+		}
 	}
-	if b.send.HasFocus() && event.Key() == tcell.KeyRune && event.Rune() == ' ' {
-		b.submitCommand()
+	if b.macros {
 		return nil
 	}
 	if !b.tree.HasFocus() {

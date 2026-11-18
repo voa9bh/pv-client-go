@@ -15,27 +15,28 @@ import (
 )
 
 type snapshot struct {
-	command, response, inspectorText                          string
-	metadataLoaded, methods, sending, commandFocus, sendFocus bool
-	class                                                     int64
-	nodes                                                     map[string]string
-	states                                                    map[string]loadState
-	expanded                                                  map[string]bool
-	selected                                                  string
-	details                                                   string
-	status                                                    string
-	rendered                                                  string
-	generation                                                uint64
-	connecting                                                bool
+	command, response, inspectorText      string
+	metadataLoaded, sending, commandFocus bool
+	memberFocus, macros                   bool
+	class                                 int64
+	nodes                                 map[string]string
+	states                                map[string]loadState
+	expanded                              map[string]bool
+	selected                              string
+	details                               string
+	status                                string
+	rendered                              string
+	generation                            uint64
+	connecting                            bool
 }
 
 func capture(b *browser) snapshot {
 	s := snapshot{
 		command: b.command.GetText(), response: b.response.GetText(false),
 		metadataLoaded: b.inspectTarget != nil && !b.inspectLoading,
-		methods:        b.methodsTab, sending: b.sending, class: b.info.class,
-		commandFocus: b.command.HasFocus(), sendFocus: b.send.HasFocus(),
-		inspectorText: b.memberDetails.GetText(false),
+		sending:        b.sending, class: b.info.class,
+		commandFocus: b.command.HasFocus(), memberFocus: b.table.HasFocus(), macros: b.macros,
+		inspectorText: b.details.GetText(false),
 		nodes:         make(map[string]string), states: make(map[string]loadState), expanded: make(map[string]bool),
 		selected: b.selected().address(), details: b.details.GetText(false), status: b.status.GetText(false),
 		generation: b.generation, connecting: b.connecting,
@@ -57,6 +58,10 @@ type runningBrowser struct {
 }
 
 func startBrowser(t *testing.T, client browserClient) *runningBrowser {
+	return startBrowserSize(t, client, 80, 24)
+}
+
+func startBrowserSize(t *testing.T, client browserClient, width, height int) *runningBrowser {
 	t.Helper()
 	b := newBrowser(context.Background(), client, "localhost:5002", new(logBuffer))
 	ui := &runningBrowser{b: b, views: make(chan snapshot, 8), done: make(chan error, 1)}
@@ -77,7 +82,10 @@ func startBrowser(t *testing.T, client browserClient) *runningBrowser {
 		default:
 		}
 	})
-	go func() { ui.done <- b.run(tcell.NewSimulationScreen("UTF-8")) }()
+	screen := tcell.NewSimulationScreen("UTF-8")
+	b.app.SetScreen(screen)
+	screen.SetSize(width, height)
+	go func() { ui.done <- b.run(nil) }()
 	t.Cleanup(func() {
 		b.cancel()
 		select {

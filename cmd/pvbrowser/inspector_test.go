@@ -32,105 +32,134 @@ func editorClient(ask func(context.Context, string) (string, error)) *fakeClient
 	}
 }
 
-func TestInspectorEditorExplicitSend(t *testing.T) {
-	var sends atomic.Int32
+func TestCombinedMemberWorkflow(t *testing.T) {
 	commands := make(chan string, 8)
-	client := editorClient(func(ctx context.Context, command string) (string, error) {
-		sends.Add(1)
+	ui := startBrowser(t, editorClient(func(ctx context.Context, command string) (string, error) {
 		commands <- command
 		return "line 1\n[red]line 2\x1b", nil
-	})
-	ui := startBrowser(t, client)
+	}))
 	ui.wait(t, func(s snapshot) bool { return s.metadataLoaded && s.class == 181 })
-	ui.key(tcell.KeyTab, 0) // table
-	ui.key(tcell.KeyDown, 0)
-	ui.wait(t, func(s snapshot) bool { return s.command == "/pvServer.value" })
-	if sends.Load() != 0 {
-		t.Fatal("member selection executed a command")
+	ui.key(tcell.KeyTab, 0)
+	ui.wait(t, func(s snapshot) bool { return s.memberFocus && strings.Contains(s.details, "PropertyHandle: -1") })
+	select {
+	case command := <-commands:
+		t.Fatalf("selection sent %s", command)
+	default:
 	}
-	ui.key(tcell.KeyEnter, 0)
-	ui.wait(t, func(s snapshot) bool { return s.commandFocus })
-	for _, r := range "=qRr" {
+	ui.key(tcell.KeyRune, 'g')
+	ui.wait(t, func(s snapshot) bool { return strings.Contains(s.response, "Result:") })
+	if got := <-commands; got != "/pvServer.value" {
+		t.Fatalf("read: %q", got)
+	}
+	ui.key(tcell.KeyRune, 's')
+	ui.wait(t, func(s snapshot) bool { return s.commandFocus && s.command == "" })
+	for _, r := range "qRrgsc" {
 		ui.key(tcell.KeyRune, r)
 	}
-	ui.wait(t, func(s snapshot) bool { return s.command == "/pvServer.value=qRr" })
-	ui.key(tcell.KeyEnter, 0) // move to Send, without submitting
-	ui.wait(t, func(s snapshot) bool { return s.sendFocus })
-	if sends.Load() != 0 {
-		t.Fatal("Enter in editor sent a command")
-	}
 	ui.key(tcell.KeyEnter, 0)
-	s := ui.wait(t, func(s snapshot) bool { return strings.Contains(s.response, "Result:") })
+	s := ui.wait(t, func(s snapshot) bool {
+		return s.memberFocus && strings.Contains(s.response, "Result:") && strings.Contains(s.response, "=qRrgsc")
+	})
+	if got := <-commands; got != "/pvServer.value=qRrgsc" {
+		t.Fatalf("write: %q", got)
+	}
 	if !strings.Contains(s.response, "line 1\n[red]line 2�") {
-		t.Fatalf("response formatting: %q", s.response)
+		t.Fatalf("response: %q", s.response)
 	}
-	if command := <-commands; command != "/pvServer.value=qRr" {
-		t.Fatalf("sent %q", command)
+	ui.key(tcell.KeyRune, 's')
+	ui.wait(t, func(s snapshot) bool { return s.commandFocus && s.command == "" })
+	ui.key(tcell.KeyEscape, 0)
+	ui.wait(t, func(s snapshot) bool { return s.memberFocus })
+	select {
+	case command := <-commands:
+		t.Fatalf("Esc sent %s", command)
+	default:
 	}
-	ui.key(tcell.KeyF2, 0)
-	ui.key(tcell.KeyBacktab, 0) // command
-	ui.key(tcell.KeyBacktab, 0) // methods table
-	ui.key(tcell.KeyDown, 0)
-	ui.wait(t, func(s snapshot) bool { return s.command == "/pvServer.set()" && s.methods })
-	if sends.Load() != 1 {
-		t.Fatal("method selection executed it")
+	ui.key(tcell.KeyRune, 's')
+	ui.key(tcell.KeyEnter, 0)
+	ui.wait(t, func(s snapshot) bool {
+		return strings.Contains(s.response, `Command: /pvServer.value=""`) && !s.sending
+	})
+	if got := <-commands; got != `/pvServer.value=""` {
+		t.Fatalf("empty write: %q", got)
+	}
+	ui.key(tcell.KeyDown, 0) // Skips divider.
+	ui.wait(t, func(s snapshot) bool { return strings.Contains(s.details, "MethodHandle: -2") })
+	ui.key(tcell.KeyRune, 'g')
+	ui.wait(t, func(s snapshot) bool { return strings.Contains(s.status, "g/s act on properties only") })
+	select {
+	case command := <-commands:
+		t.Fatalf("g invoked %s", command)
+	default:
+	}
+	ui.key(tcell.KeyRune, 'c')
+	ui.key(tcell.KeyEnter, 0)
+	ui.wait(t, func(s snapshot) bool { return strings.Contains(s.response, "Command: /pvServer.set()") && !s.sending })
+	if got := <-commands; got != "/pvServer.set()" {
+		t.Fatalf("method: %q", got)
+	}
+	ui.key(tcell.KeyRune, 'c')
+	for _, r := range `1,"hello",2` {
+		ui.key(tcell.KeyRune, r)
 	}
 	ui.key(tcell.KeyEnter, 0)
-	ui.key(tcell.KeyEnter, 0)
-	ui.key(tcell.KeyEnter, 0)
-	ui.wait(t, func(s snapshot) bool { return strings.Contains(s.response, "Command: /pvServer.set()\nResult:") })
-	if command := <-commands; command != "/pvServer.set()" {
-		t.Fatalf("sent %q", command)
+	ui.wait(t, func(s snapshot) bool { return strings.Contains(s.response, `/pvServer.set(1,"hello",2)`) && !s.sending })
+	if got := <-commands; got != `/pvServer.set(1,"hello",2)` {
+		t.Fatalf("parameters: %q", got)
 	}
 }
 
-func TestInspectorSendFailureEmptyAndDuplicate(t *testing.T) {
-	started := make(chan struct{}, 2)
+func TestImmediateFocusAndPendingSuppression(t *testing.T) {
+	started := make(chan struct{}, 1)
 	release := make(chan struct{})
 	defer close(release)
 	var count atomic.Int32
-	client := editorClient(func(ctx context.Context, command string) (string, error) {
-		n := count.Add(1)
+	ui := startBrowser(t, editorClient(func(ctx context.Context, command string) (string, error) {
+		count.Add(1)
 		started <- struct{}{}
 		select {
 		case <-release:
 		case <-ctx.Done():
 			return "", ctx.Err()
 		}
-		if n == 1 {
-			return "", errors.New("remote failure")
-		}
-		return "", nil
-	})
-	// Direct widget-state execution keeps control of the pending result.
-	b := newBrowser(context.Background(), client, "test:5002", new(logBuffer))
-	defer b.cancel()
-	b.ready = true
-	b.command.SetText("#-1.value")
-	b.submitCommand()
-	select {
-	case <-started:
-	case <-time.After(time.Second):
-		t.Fatal("command not started")
-	}
-	b.submitCommand()
-	if count.Load() != 1 {
-		t.Fatal("duplicate send accepted")
-	}
-	release <- struct{}{}
-	r := <-b.results
-	b.apply(r)
-	if !strings.Contains(b.response.GetText(false), "remote failure") || b.sending {
-		t.Fatal("command error not shown")
-	}
-	b.submitCommand()
+		return "", errors.New("remote failure")
+	}))
+	ui.wait(t, func(s snapshot) bool { return s.metadataLoaded })
+	ui.key(tcell.KeyTab, 0)
+	ui.key(tcell.KeyRune, 's')
+	ui.key(tcell.KeyEnter, 0)
 	<-started
-	release <- struct{}{}
-	b.apply(<-b.results)
-	if !strings.Contains(b.response.GetText(false), "(empty response)") {
-		t.Fatal("empty result not shown")
+	ui.wait(t, func(s snapshot) bool { return s.memberFocus && s.sending })
+	ui.key(tcell.KeyRune, 'g')
+	ui.key(tcell.KeyRune, 's')
+	ui.wait(t, func(s snapshot) bool { return strings.Contains(s.status, "already pending") })
+	if count.Load() != 1 {
+		t.Fatal("duplicate operation sent")
 	}
-	b.workers.Wait()
+	release <- struct{}{}
+	ui.wait(t, func(s snapshot) bool { return strings.Contains(s.response, "remote failure") && !s.sending })
+}
+
+func TestCombinedListAndMetadataErrors(t *testing.T) {
+	b := newBrowser(context.Background(), &fakeClient{}, "test:5002", new(logBuffer))
+	defer b.cancel()
+	b.inspectTarget = b.root
+	b.info = metadata{class: 181, properties: []member{{handle: -1, name: "value", description: "property", datatype: "t"}},
+		methods: []member{{handle: -2, name: "set", description: "method", request: "t"}}}
+	b.renderInspector()
+	if b.table.GetCell(1, 0).Text != "value" || b.table.GetCell(3, 0).Text != "set()" || !b.table.GetCell(2, 0).NotSelectable {
+		t.Fatal("members not combined with nonselectable divider")
+	}
+	b.app.SetFocus(b.table)
+	b.selectMember(3)
+	if !strings.Contains(b.details.GetText(false), "Request: t") {
+		t.Fatal("method metadata hidden")
+	}
+	b.info.propertyErr = errors.New("bad property list")
+	b.renderInspector()
+	if !strings.Contains(b.table.GetCell(1, 0).Text, "bad property list") || b.table.GetCell(3, 0).Text != "set()" {
+		t.Fatal("successful method list hidden")
+	}
 }
 
 func TestInspectorStaleMetadataAndCommand(t *testing.T) {
@@ -139,7 +168,7 @@ func TestInspectorStaleMetadataAndCommand(t *testing.T) {
 	b.inspectSequence = 5
 	b.apply(result{kind: metadataResult, generation: b.generation, sequence: 4, info: metadata{class: 999}})
 	if b.info.class == 999 {
-		t.Fatal("old selection metadata applied")
+		t.Fatal("old metadata applied")
 	}
 	b.apply(result{kind: metadataResult, generation: b.generation, sequence: 5, info: metadata{class: 181}})
 	if b.info.class != 181 {
@@ -149,7 +178,7 @@ func TestInspectorStaleMetadataAndCommand(t *testing.T) {
 	b.clearInspector()
 	b.apply(result{kind: commandResult, generation: b.generation, sequence: 7, text: "stale"})
 	if strings.Contains(b.response.GetText(false), "stale") {
-		t.Fatal("canceled command overwrote new state")
+		t.Fatal("stale command applied")
 	}
 }
 
@@ -164,7 +193,6 @@ func TestInspectorSelectionCancellation(t *testing.T) {
 			canceled <- struct{}{}
 			return "", ctx.Err()
 		}
-
 		if strings.HasSuffix(command, ".classHandle") {
 			return "182", nil
 		}
@@ -173,49 +201,41 @@ func TestInspectorSelectionCancellation(t *testing.T) {
 	b := newBrowser(context.Background(), client, "test:5002", new(logBuffer))
 	defer b.cancel()
 	b.ready = true
-	first := b.makeBranch(object{id: -1}, b.root)
-	second := b.makeBranch(object{id: -2}, b.root)
-	b.inspect(first, false)
+	b.inspect(b.makeBranch(object{id: -1}, b.root), false)
 	<-started
-	b.command.SetText("#-1.value=old")
-	b.inspect(second, false)
-	if b.command.GetText() != "" {
-		t.Fatal("old command retained on selection change")
-	}
+	b.inspect(b.makeBranch(object{id: -2}, b.root), false)
 	select {
 	case <-canceled:
 	case <-time.After(time.Second):
-		t.Fatal("old metadata query not canceled")
+		t.Fatal("metadata not canceled")
 	}
 	b.workers.Wait()
 	b.drain()
 	if b.info.class != 182 {
-		t.Fatalf("stale metadata applied: %d", b.info.class)
+		t.Fatal("stale metadata applied")
 	}
 }
 
-func TestInspectorReconnectCancelsCommand(t *testing.T) {
+func TestCommandCancellationAndNoReplay(t *testing.T) {
 	started := make(chan struct{})
 	canceled := make(chan struct{})
 	var calls atomic.Int32
-	client := editorClient(func(ctx context.Context, command string) (string, error) {
+	b := newBrowser(context.Background(), editorClient(func(ctx context.Context, command string) (string, error) {
 		calls.Add(1)
 		close(started)
 		<-ctx.Done()
 		close(canceled)
-		return "old response", ctx.Err()
-	})
-	b := newBrowser(context.Background(), client, "test:5002", new(logBuffer))
+		return "old", ctx.Err()
+	}), "test:5002", new(logBuffer))
 	defer b.cancel()
 	b.ready = true
-	b.command.SetText("#-1.value=new")
-	b.submitCommand()
+	b.submit("#-1.value=new")
 	<-started
 	b.connect(true)
 	select {
 	case <-canceled:
 	case <-time.After(time.Second):
-		t.Fatal("reconnect did not cancel local wait")
+		t.Fatal("command not canceled")
 	}
 	b.workers.Wait()
 	for len(b.results) > 0 {
@@ -224,53 +244,53 @@ func TestInspectorReconnectCancelsCommand(t *testing.T) {
 			b.apply(r)
 		}
 	}
-	if b.command.GetText() != "" || b.sending || strings.Contains(b.response.GetText(false), "old response") {
-		t.Fatal("reconnect retained command target/result")
+	if b.sending || strings.Contains(b.response.GetText(false), "Result:") {
+		t.Fatal("old command result applied")
 	}
 	if calls.Load() != 1 {
 		t.Fatal("command replayed")
 	}
 }
 
-func TestInspectorQuitDuringCommand(t *testing.T) {
+func TestMacrosPlaceholderCancelsEdit(t *testing.T) {
+	var calls atomic.Int32
+	ui := startBrowser(t, editorClient(func(context.Context, string) (string, error) { calls.Add(1); return "", nil }))
+	ui.wait(t, func(s snapshot) bool { return s.metadataLoaded })
+	ui.key(tcell.KeyTab, 0)
+	ui.key(tcell.KeyRune, 's')
+	ui.wait(t, func(s snapshot) bool { return s.commandFocus })
+	ui.key(tcell.KeyF2, 0)
+	ui.wait(t, func(s snapshot) bool { return s.macros && strings.Contains(s.rendered, "not implemented") })
+	ui.key(tcell.KeyRune, 's')
+	ui.key(tcell.KeyEnter, 0)
+	ui.key(tcell.KeyF2, 0)
+	ui.wait(t, func(s snapshot) bool { return !s.macros && !s.commandFocus })
+	if calls.Load() != 0 {
+		t.Fatal("placeholder executed command")
+	}
+}
+
+func TestQuitDuringOperation(t *testing.T) {
 	started := make(chan struct{})
 	canceled := make(chan struct{})
-	client := editorClient(func(ctx context.Context, command string) (string, error) {
+	ui := startBrowser(t, editorClient(func(ctx context.Context, command string) (string, error) {
 		close(started)
 		<-ctx.Done()
 		close(canceled)
 		return "", ctx.Err()
-	})
-	ui := startBrowser(t, client)
+	}))
 	ui.wait(t, func(s snapshot) bool { return s.metadataLoaded })
 	ui.key(tcell.KeyTab, 0)
-	ui.key(tcell.KeyEnter, 0)
-	ui.key(tcell.KeyEnter, 0)
-	ui.key(tcell.KeyRune, ' ')
+	ui.key(tcell.KeyRune, 'g')
 	select {
 	case <-started:
 	case <-time.After(time.Second):
-		t.Fatal("Send not started")
+		t.Fatal("operation not started")
 	}
 	ui.key(tcell.KeyCtrlC, 0)
 	select {
 	case <-canceled:
 	case <-time.After(time.Second):
-		t.Fatal("quit did not cancel command wait")
-	}
-}
-
-func TestInspectorPartialMetadataError(t *testing.T) {
-	b := newBrowser(context.Background(), &fakeClient{}, "test:5002", new(logBuffer))
-	defer b.cancel()
-	b.inspectTarget = b.root
-	b.info = metadata{class: 181, propertyErr: errors.New("bad property list"), methods: []member{{handle: -1, name: "get"}}}
-	b.renderInspector()
-	if !strings.Contains(b.memberDetails.GetText(false), "bad property list") {
-		t.Fatal("property error hidden")
-	}
-	b.switchTab()
-	if b.table.GetCell(1, 1).Text != "get" {
-		t.Fatal("successful method list hidden by property failure")
+		t.Fatal("quit did not cancel")
 	}
 }

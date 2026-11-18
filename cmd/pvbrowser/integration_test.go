@@ -133,14 +133,12 @@ func TestBrowserWithTCPClient(t *testing.T) {
 	ui.wait(t, func(s snapshot) bool { return s.states["#-1"] == loaded })
 	ui.key(tcell.KeyDown, 0)
 	s := ui.wait(t, func(s snapshot) bool { return s.selected == "#-2" })
-	if s.details != "Name: leaf\nAddress: #-2\nPath (informational): /pvServer/procs/leaf" {
+	if !strings.Contains(s.details, "Name: leaf (#-2)") || !strings.Contains(s.details, "/pvServer/procs/leaf") {
 		t.Fatalf("unexpected leaf details: %q", s.details)
 	}
 	ui.wait(t, func(s snapshot) bool { return s.selected == "#-2" && s.metadataLoaded })
 	ui.key(tcell.KeyTab, 0)
-	ui.wait(t, func(s snapshot) bool { return s.command == "#-2.value" })
-	ui.key(tcell.KeyEnter, 0)
-	ui.key(tcell.KeyEnter, 0)
-	ui.key(tcell.KeyEnter, 0)
+	ui.wait(t, func(s snapshot) bool { return s.memberFocus })
+	ui.key(tcell.KeyRune, 'g')
 	ui.wait(t, func(s snapshot) bool { return strings.Contains(s.response, "Result:\n123") })
 }

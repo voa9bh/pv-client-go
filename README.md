@@ -112,52 +112,68 @@ numeric ID. Children appear in server order and are loaded only when expanded.
 
 | Key | Action |
 |---|---|
-| Tab / Shift+Tab | Cycle tree, member table, command, Send, response |
-| F2 | Switch Properties / Methods |
-| F3 | Focus scrollable member details; Tab returns to command |
+| Tab / Shift+Tab | Cycle tree, member list, Input/Output, shared information |
+| F2 | Switch Objects / Macros (placeholder only) |
 | Up / Down in tree | Select an object |
 | Enter in tree | Expand/collapse; load children on first expansion |
 | Right / Left in tree | Expand/load, or collapse/select parent |
 | `r` in tree | Reload selected children and metadata |
 | `R` in tree | Reconnect and rebuild, discarding cached IDs |
-| Up / Down in member table | Select a member and prefill its command |
-| Enter in member table | Prefill command and focus editor (does not execute) |
-| Enter in command field | Focus Send (does not execute) |
-| Enter / Space on Send | Execute the edited command once |
+| Up / Down in member list | Select property/method and show its information |
+| `g` in member list | Get selected property; never invokes a method |
+| `s` in member list | Edit a blank property value |
+| `c` in member list | Edit blank parameters for the selected method |
+| Enter in input field | Submit once and immediately return to the selected member |
+| Esc in input field | Cancel editing without sending |
 | `q` in tree / Ctrl+C anywhere | Cancel outstanding work and quit |
 
-The right column fetches the selected object's `.classHandle`, then
+The Objects workspace has a tree on the left, a combined member list on the
+right, and an Input/Output region below that list. Properties come first;
+a nonselectable dashed divider separates methods, which display with `()`.
+One shared information panel below both columns follows tree or member focus.
+The Macros workspace is a placeholder with no storage or execution.
+
+The browser fetches the selected object's `.classHandle`, then
 `.getPropertyInfos(classHandle)` and `.getMethodInfos(classHandle)`.
-Properties show handle, name, description, security, dimension, and datatype;
-methods show handle, name, description, security, request format, and response
-format. Full member details are scrollable using F3 and arrow/Page keys.
+The list shows names only. The shared information panel shows property handle,
+name, description, security, dimension, and datatype; for methods it shows handle,
+name, description, security, request format, and response format. Tab to this
+panel to scroll long descriptions with arrow/Page keys. Tree focus shows object
+name/address, class handle, and path. No root ID is invented; object descriptions
+are marked unavailable because no object-description query is assumed.
 The six count-prefixed lists are parsed without dropping empty format strings.
 Malformed lists are reported explicitly; the Java text format does not escape
 semicolons embedded in descriptions, so ambiguous metadata cannot be reliably
 recovered. A failed list does not hide a successful other list.
 
-Selecting a property prefills `#ID.propertyName`; append `=newValue` to write.
-Selecting a method prefills `#ID.methodName()`; enter parameters between the
-parentheses, for example `#-1.methodName(parameter1,parameter2)`.
-The root uses `/pvServer` instead of an ID. The entire command remains editable,
-so `/pvServer/path/to/object.propertyName=newValue` also works. String quotes
-are optional as supported by the server; the editor does not reinterpret or
-automatically quote values.
+Selecting a member never executes it. **g** sends `#ID.propertyName` for a
+property. **s** (property) or **c** (method) focuses a fresh blank input: enter only
+the new property value or comma-separated method parameters, not a full command. Enter constructs
+`#ID.propertyName=newValue` or `#ID.methodName(parameters)` and submits once.
+The root uses `/pvServer` instead of an ID. The selected target is captured when
+editing starts. String quotes are optional as supported by the server;
+nonempty input is passed verbatim. Empty property input sends `=""`, an explicit
+empty string, while empty method input sends `()`. Esc cancels an unsubmitted
+edit; F2 also abandons an edit before changing workspace.
 
-**Send can modify the server or invoke destructive methods.** Merely browsing,
-selecting a row, or editing does not execute the command. No client-side security
-level enforcement or automatic property-value polling is added. Only Send
-executes; requests are not replayed after reconnect. A failed/canceled request
+**s or c followed by Enter can modify the server or invoke destructive methods.**
+Merely browsing, selecting a row, or editing does not execute anything.
+No client-side security enforcement or automatic property-value polling is added.
+Requests are not replayed after reconnect. A failed/canceled request
 may already have taken effect on the server. Reconnect/quit cancels the local
 wait, not execution on the server. After commands that change the object tree,
 use `r` or `R` explicitly; commands are never rerun as part of refreshing.
 
-The response pane retains the submitted command and success/error response,
-including empty results. Another Send is disabled while one is pending.
-Changing objects clears the command field so an old target is not reused
-accidentally. Letters such as `q`, `r`, and `R` are ordinary text in the editor.
+Input/Output retains the submitted expression and success/error response,
+including empty results. Focus returns to the member immediately on submission,
+without blocking for a reply. Further get/set/call submissions are blocked while that
+operation is pending. Changing members/objects discards obsolete edits/results
+and cancels a pending local wait, warning that the operation may already have
+executed. These shortcuts use unmodified lowercase letters only in the member
+list; `g`, `s`, `c`, `q`, `r`, and `R` are ordinary text in the input.
+F5/F6 are no longer bound. F2 still switches workspaces.
 
-The details pane shows the selected name, ID address, and constructed path.
+For object selection, the shared panel shows name, ID address, and constructed path.
 Paths are informational, not filesystem paths; names containing `/` or other
 special syntax may require server-specific escaping for path-based requests.
 Control characters are replaced for display and server names cannot inject
@@ -167,7 +183,9 @@ Networking never runs on the UI event loop. Each child-list operation has a
 30-second overall budget; errors are displayed with retry guidance. A failed
 refresh retains the previous snapshot, explicitly marked error/stale, rather
 than presenting a partial or empty success. Repeated/cyclic IDs are errors.
-Client logs appear in the diagnostics pane instead of overwriting the terminal.
+There is no permanent diagnostics pane. New client warnings appear in the status
+line; query failures appear in status or Input/Output instead of overwriting
+terminal rendering.
 
 Status reflects the **last browser operation**, not live connection monitoring.
 The client still automatically reconnects after socket loss, but a server restart
