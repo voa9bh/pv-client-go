@@ -124,7 +124,7 @@ func newBrowser(parent context.Context, client browserClient, address string, lo
 		AddItem(b.pages, 0, 1, true).
 		AddItem(b.details, 5, 0, false).
 		AddItem(b.status, 1, 0, false).
-		AddItem(tview.NewTextView().SetText("Tab: focus | F2: tab | Members: g get, s set, c call | Tree: r/R refresh/reconnect, q quit"), 2, 0, false)
+		AddItem(tview.NewTextView().SetText("Tab: focus | F2: tab | Members: g get, Enter set/call, G globals | Tree: r/R refresh/reconnect, q quit"), 2, 0, false)
 	b.app.SetRoot(layout, true).SetFocus(b.tree)
 	b.tree.SetChangedFunc(func(node *tview.TreeNode) {
 		if branch, ok := node.GetReference().(*branch); ok {
@@ -382,10 +382,17 @@ func (b *browser) input(event *tcell.EventKey) *tcell.EventKey {
 		b.updateDetails()
 		return nil
 	}
+	if !b.macros && b.table.HasFocus() && event.Key() == tcell.KeyEnter && event.Modifiers() == tcell.ModNone {
+		b.memberAction('\n')
+		return nil
+	}
 	if !b.macros && b.table.HasFocus() && event.Key() == tcell.KeyRune && event.Modifiers() == tcell.ModNone {
 		switch event.Rune() {
-		case 'g', 's', 'c':
-			b.memberAction(event.Rune())
+		case 'g':
+			b.memberAction('g')
+			return nil
+		case 'G':
+			b.toggleGlobals()
 			return nil
 		}
 	}

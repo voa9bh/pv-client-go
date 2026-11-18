@@ -32,7 +32,7 @@ type snapshot struct {
 
 func capture(b *browser) snapshot {
 	s := snapshot{
-		command: b.command.GetText(), response: b.response.GetText(false),
+		command: b.command.GetText(), response: b.commandDisplay.GetText(false) + "\n" + b.response.GetText(false),
 		metadataLoaded: b.inspectTarget != nil && !b.inspectLoading,
 		sending:        b.sending, class: b.info.class,
 		commandFocus: b.command.HasFocus(), memberFocus: b.table.HasFocus(), macros: b.macros,

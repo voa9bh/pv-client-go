@@ -112,7 +112,7 @@ numeric ID. Children appear in server order and are loaded only when expanded.
 
 | Key | Action |
 |---|---|
-| Tab / Shift+Tab | Cycle tree, member list, Input/Output, shared information |
+| Tab / Shift+Tab | Cycle tree, member list, Result/input, Command display, shared information |
 | F2 | Switch Objects / Macros (placeholder only) |
 | Up / Down in tree | Select an object |
 | Enter in tree | Expand/collapse; load children on first expansion |
@@ -121,8 +121,8 @@ numeric ID. Children appear in server order and are loaded only when expanded.
 | `R` in tree | Reconnect and rebuild, discarding cached IDs |
 | Up / Down in member list | Select property/method and show its information |
 | `g` in member list | Get selected property; never invokes a method |
-| `s` in member list | Edit a blank property value |
-| `c` in member list | Edit blank parameters for the selected method |
+| Enter in member list | Edit a blank property value or method parameters |
+| `G` in member list | Toggle inclusion of negative-handle global members |
 | Enter in input field | Submit once and immediately return to the selected member |
 | Esc in input field | Cancel editing without sending |
 | `q` in tree / Ctrl+C anywhere | Cancel outstanding work and quit |
@@ -130,6 +130,10 @@ numeric ID. Children appear in server order and are loaded only when expanded.
 The Objects workspace has a tree on the left, a combined member list on the
 right, and an Input/Output region below that list. Properties come first;
 a nonselectable dashed divider separates methods, which display with `()`.
+By default, only positive-handle properties and methods are shown. `G` adds or
+hides negative-handle globals using already loaded metadata, without another
+server query. The filter choice persists across object changes and reconnects
+for this session; zero-handle members are never actionable.
 One shared information panel below both columns follows tree or member focus.
 The Macros workspace is a placeholder with no storage or execution.
 
@@ -147,7 +151,7 @@ semicolons embedded in descriptions, so ambiguous metadata cannot be reliably
 recovered. A failed list does not hide a successful other list.
 
 Selecting a member never executes it. **g** sends `#ID.propertyName` for a
-property. **s** (property) or **c** (method) focuses a fresh blank input: enter only
+property. **Enter** on a property or method focuses a fresh blank input: enter only
 the new property value or comma-separated method parameters, not a full command. Enter constructs
 `#ID.propertyName=newValue` or `#ID.methodName(parameters)` and submits once.
 The root uses `/pvServer` instead of an ID. The selected target is captured when
@@ -156,7 +160,7 @@ nonempty input is passed verbatim. Empty property input sends `=""`, an explicit
 empty string, while empty method input sends `()`. Esc cancels an unsubmitted
 edit; F2 also abandons an edit before changing workspace.
 
-**s or c followed by Enter can modify the server or invoke destructive methods.**
+**Enter on a member followed by Enter in the input can modify the server or invoke destructive methods.**
 Merely browsing, selecting a row, or editing does not execute anything.
 No client-side security enforcement or automatic property-value polling is added.
 Requests are not replayed after reconnect. A failed/canceled request
@@ -164,14 +168,18 @@ may already have taken effect on the server. Reconnect/quit cancels the local
 wait, not execution on the server. After commands that change the object tree,
 use `r` or `R` explicitly; commands are never rerun as part of refreshing.
 
-Input/Output retains the submitted expression and success/error response,
-including empty results. Focus returns to the member immediately on submission,
+Input/Output uses exactly two content lines: **Command** and **Result**. Both
+remain visible and do not wrap; Tab to a displayed line and use Left/Right to
+scroll horizontally. Multiline output uses visible `\n`, `\r`, and `\t` markers.
+The submitted expression and success/error response, including empty results,
+are retained. Focus returns to the member immediately on submission,
 without blocking for a reply. Further get/set/call submissions are blocked while that
 operation is pending. Changing members/objects discards obsolete edits/results
 and cancels a pending local wait, warning that the operation may already have
 executed. These shortcuts use unmodified lowercase letters only in the member
-list; `g`, `s`, `c`, `q`, `r`, and `R` are ordinary text in the input.
-F5/F6 are no longer bound. F2 still switches workspaces.
+list; `g`, `G`, `s`, `c`, `q`, `r`, and `R` are ordinary text in the input.
+The former `s`/`c` actions and F5/F6 are no longer bound.
+F2 still switches workspaces.
 
 For object selection, the shared panel shows name, ID address, and constructed path.
 Paths are informational, not filesystem paths; names containing `/` or other

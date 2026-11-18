@@ -14,7 +14,7 @@ func TestCompactAndWideLayout(t *testing.T) {
 		t.Run(fmt.Sprint(size), func(t *testing.T) {
 			ui := startBrowserSize(t, editorClient(func(context.Context, string) (string, error) { return "", nil }), size[0], size[1])
 			s := ui.wait(t, func(s snapshot) bool { return s.metadataLoaded && strings.Contains(s.rendered, "set()") })
-			for _, label := range []string{"[Objects]", "Macros", "Properties / Methods", "Input / Output", "Selected object", "g get, s set, c call"} {
+			for _, label := range []string{"[Objects]", "Macros", "Properties / Methods", "Input / Output", "Selected object", "g get, Enter set/call, G globals"} {
 				if !strings.Contains(s.rendered, label) {
 					t.Fatalf("missing %q:\n%s", label, s.rendered)
 				}
@@ -27,7 +27,7 @@ func TestCompactAndWideLayout(t *testing.T) {
 			}
 			ui.key(tcell.KeyTab, 0)
 			ui.wait(t, func(s snapshot) bool {
-				return strings.Contains(s.details, "PropertyHandle: -1") &&
+				return strings.Contains(s.details, "PropertyHandle: 1") &&
 					strings.Contains(s.details, "Datatype: t") && strings.Contains(s.details, "A property")
 			})
 			ui.key(tcell.KeyBacktab, 0)
@@ -45,7 +45,7 @@ func TestEmptyOutputAndMemberChangeRejectsOldReply(t *testing.T) {
 	b.selectMember(1)
 	b.commandSequence = 10
 	b.apply(result{kind: commandResult, generation: b.generation, sequence: 10, command: "/pvServer.value"})
-	if !strings.Contains(b.response.GetText(false), "(empty response)") {
+	if !strings.Contains(b.response.GetText(false), "<ready>") {
 		t.Fatal("empty result hidden")
 	}
 	b.selectMember(3)

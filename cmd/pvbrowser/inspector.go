@@ -45,6 +45,8 @@ type inspector struct {
 	command         *tview.InputField
 	response        *tview.TextView
 	io              *tview.Pages
+	commandDisplay  *tview.TextView
+	showGlobals     bool
 	inspectTarget   *branch
 	inspectSequence uint64
 	inspectCancel   context.CancelFunc
@@ -63,7 +65,6 @@ func (b *browser) initInspector() {
 	b.table = tview.NewTable().SetSelectable(true, false).SetFixed(1, 0)
 	b.table.SetBorder(true).SetTitle(" Properties / Methods ")
 	b.command = tview.NewInputField()
-	b.command.SetBorder(true).SetTitle(" Input / Output - Enter submits, Esc cancels ")
 	b.command.SetDoneFunc(func(key tcell.Key) {
 		switch key {
 		case tcell.KeyEscape:
@@ -79,11 +80,15 @@ func (b *browser) initInspector() {
 			b.submit(command)
 		}
 	})
-	b.response = tview.NewTextView().SetScrollable(true)
-	b.response.SetBorder(true).SetTitle(" Input / Output ")
-	b.io = tview.NewPages().AddPage("output", b.response, true, true).AddPage("input", b.command, true, false)
+	b.response = tview.NewTextView().SetScrollable(true).SetWrap(false)
+	b.commandDisplay = tview.NewTextView().SetScrollable(true).SetWrap(false).SetText("Command: ")
+	b.response.SetText("Result: ")
+	b.io = tview.NewPages().AddPage("output", b.commandDisplay, true, true).AddPage("input", b.command, true, false)
+	ioLayout := tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(b.io, 1, 0, false).AddItem(b.response, 1, 0, false)
+	ioLayout.SetBorder(true).SetTitle(" Input / Output ")
 	b.inspectorLayout = tview.NewFlex().SetDirection(tview.FlexRow).
-		AddItem(b.table, 0, 2, true).AddItem(b.io, 0, 1, false)
+		AddItem(b.table, 0, 1, true).AddItem(ioLayout, 4, 0, false)
 	b.table.SetSelectionChangedFunc(func(row, column int) {
 		if !b.rendering {
 			b.selectMember(row)
@@ -107,9 +112,10 @@ func (b *browser) invalidateCommand() {
 	b.commandSequence++
 	b.sending = false
 	b.cancelEdit()
-	b.response.SetText("")
+	b.response.SetText("Result: ")
+	b.commandDisplay.SetText("Command: ")
 	if pending {
-		b.response.SetText("Local wait canceled; the sent operation may already have executed. It was not replayed.")
+		b.response.SetText("Result: local wait canceled; the sent operation may already have executed. It was not replayed.")
 	}
 }
 
@@ -171,17 +177,23 @@ func (b *browser) applyInspector(r result) {
 		}
 		b.sending = false
 		b.commandCancel = nil
-		message := "Command: " + displayMultiline(r.command) + "\n"
+		b.commandDisplay.SetText("Command: " + singleLine(r.command)).ScrollToBeginning()
+		message := "Result: "
 		if r.err != nil {
-			message += "ERROR: " + displayMultiline(r.err.Error()) + "\nThe operation may have executed; it was not replayed."
+			message += "ERROR: " + singleLine(r.err.Error()) + " | The operation may have executed; it was not replayed."
 		} else {
-			message += "Result:\n" + displayMultiline(r.text)
+			message += singleLine(r.text)
 			if r.text == "" {
-				message += "(empty response)"
+				message += "<ready>"
 			}
 		}
 		b.response.SetText(message).ScrollToBeginning()
 	}
+}
+
+func singleLine(text string) string {
+	text = strings.NewReplacer("\n", `\n`, "\r", `\r`, "\t", `\t`).Replace(text)
+	return clean(text)
 }
 
 func displayMultiline(text string) string {
@@ -197,6 +209,11 @@ func (b *browser) renderInspector() {
 	b.rendering = true
 	defer func() { b.rendering = false }()
 	b.table.Clear()
+	title := " Properties / Methods | positive only (G: globals) "
+	if b.showGlobals {
+		title = " Properties / Methods | including globals (G) "
+	}
+	b.table.SetTitle(title)
 	b.table.SetCell(0, 0, tview.NewTableCell("Name").SetSelectable(false).SetTextColor(tcell.ColorYellow))
 	message := ""
 	switch {
@@ -228,10 +245,12 @@ func (b *browser) renderInspector() {
 			addStatus("ERROR (" + label + "): " + err.Error())
 			continue
 		}
-		if len(list) == 0 {
-			addStatus("(no " + label + ")")
-		}
+		visible := 0
 		for _, m := range list {
+			if m.handle == 0 || (m.handle < 0 && !b.showGlobals) {
+				continue
+			}
+			visible++
 			s := memberSelection{member: m, method: methods, address: b.inspectTarget.address()}
 			name := m.name
 			if methods {
@@ -240,8 +259,19 @@ func (b *browser) renderInspector() {
 			b.table.SetCell(row, 0, tview.NewTableCell(tview.Escape(clean(name))).SetReference(s).SetExpansion(1))
 			row++
 		}
+		if visible == 0 {
+			addStatus("(no visible " + label + ")")
+		}
 	}
 	b.table.Select(0, 0)
+	if b.selection != nil {
+		for i := 1; i < row; i++ {
+			if s, ok := b.table.GetCell(i, 0).GetReference().(memberSelection); ok && s == *b.selection {
+				b.table.Select(i, 0)
+				break
+			}
+		}
+	}
 	b.updateDetails()
 }
 
@@ -296,7 +326,7 @@ func (b *browser) cycleFocus(back bool) {
 	if b.edit != nil {
 		io = b.command
 	}
-	items := []tview.Primitive{b.tree, b.table, io, b.details}
+	items := []tview.Primitive{b.tree, b.table, io, b.commandDisplay, b.details}
 	index := 0
 	for i, item := range items {
 		if item.HasFocus() {
@@ -337,13 +367,10 @@ func (b *browser) memberAction(action rune) {
 	}
 	s := *b.selection
 	switch {
-	case (action == 'g' || action == 's') && s.method:
-		b.setStatus("g/s act on properties only; use c to call a method")
+	case action == 'g' && s.method:
+		b.setStatus("g reads properties only; use Enter to call a method")
 		return
-	case action == 'c' && !s.method:
-		b.setStatus("c calls methods only; use g to get or s to set a property")
-		return
-	case action != 'g' && action != 's' && action != 'c':
+	case action != 'g' && action != '\n':
 		b.setStatus("Unknown member action")
 		return
 	}
@@ -353,12 +380,11 @@ func (b *browser) memberAction(action rune) {
 		return
 	}
 	b.edit = &s
-	label := "Value: "
+	label := "Command: " + s.address + "." + singleLine(s.name) + "="
 	if s.method {
-		label = "Parameters: "
+		label = "Command: " + s.address + "." + singleLine(s.name) + "("
 	}
-	b.command.SetLabel(label).SetText("")
-	b.command.SetTitle(tview.Escape(" " + s.address + "." + clean(s.name) + " | Enter submits, Esc cancels "))
+	b.command.SetLabel(tview.Escape(label)).SetText("")
 	b.io.SwitchToPage("input")
 	b.app.SetFocus(b.command)
 	b.updateDetails()
@@ -369,7 +395,7 @@ func (b *browser) submit(command string) {
 		return
 	}
 	if !b.ready {
-		b.response.SetText("Not connected; R in the tree reconnects")
+		b.response.SetText("Result: not connected; R in the tree reconnects")
 		return
 	}
 	b.commandSequence++
@@ -377,7 +403,8 @@ func (b *browser) submit(command string) {
 	ctx, cancel := context.WithTimeout(b.ctx, 30*time.Second)
 	b.commandCancel = cancel
 	b.sending = true
-	b.response.SetText("Sending: " + displayMultiline(command))
+	b.commandDisplay.SetText("Command: " + singleLine(command)).ScrollToBeginning()
+	b.response.SetText("Result: pending...")
 	b.workers.Add(1)
 	go func() {
 		defer b.workers.Done()
@@ -385,4 +412,24 @@ func (b *browser) submit(command string) {
 		text, err := b.client.AskTxtContext(ctx, command)
 		b.post(result{kind: commandResult, generation: generation, sequence: sequence, command: command, text: text, err: err})
 	}()
+}
+
+func (b *browser) toggleGlobals() {
+	b.showGlobals = !b.showGlobals
+	if b.selection != nil && b.selection.handle < 0 && !b.showGlobals {
+		b.invalidateCommand()
+		b.selection = nil
+	}
+	b.renderInspector()
+	row, _ := b.table.GetSelection()
+	if _, ok := b.table.GetCell(row, 0).GetReference().(memberSelection); !ok {
+		for i := 1; i < b.table.GetRowCount(); i++ {
+			if _, ok := b.table.GetCell(i, 0).GetReference().(memberSelection); ok {
+				b.table.Select(i, 0)
+				break
+			}
+		}
+	}
+	row, _ = b.table.GetSelection()
+	b.selectMember(row)
 }

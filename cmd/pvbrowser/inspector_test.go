@@ -24,9 +24,9 @@ func editorClient(ask func(context.Context, string) (string, error)) *fakeClient
 			case strings.HasSuffix(command, ".classHandle"):
 				return "181", nil
 			case strings.Contains(command, ".getPropertyInfos("):
-				return oneProperty, nil
+				return strings.Replace(oneProperty, "1;-1;", "1;1;", 1), nil
 			default:
-				return oneMethod, nil
+				return strings.Replace(oneMethod, "1;-2;", "1;2;", 1), nil
 			}
 		},
 	}
@@ -40,33 +40,33 @@ func TestCombinedMemberWorkflow(t *testing.T) {
 	}))
 	ui.wait(t, func(s snapshot) bool { return s.metadataLoaded && s.class == 181 })
 	ui.key(tcell.KeyTab, 0)
-	ui.wait(t, func(s snapshot) bool { return s.memberFocus && strings.Contains(s.details, "PropertyHandle: -1") })
+	ui.wait(t, func(s snapshot) bool { return s.memberFocus && strings.Contains(s.details, "PropertyHandle: 1") })
 	select {
 	case command := <-commands:
 		t.Fatalf("selection sent %s", command)
 	default:
 	}
 	ui.key(tcell.KeyRune, 'g')
-	ui.wait(t, func(s snapshot) bool { return strings.Contains(s.response, "Result:") })
+	ui.wait(t, func(s snapshot) bool { return strings.Contains(s.response, "Result:") && !s.sending })
 	if got := <-commands; got != "/pvServer.value" {
 		t.Fatalf("read: %q", got)
 	}
-	ui.key(tcell.KeyRune, 's')
+	ui.key(tcell.KeyEnter, 0)
 	ui.wait(t, func(s snapshot) bool { return s.commandFocus && s.command == "" })
-	for _, r := range "qRrgsc" {
+	for _, r := range "qRrgGsc" {
 		ui.key(tcell.KeyRune, r)
 	}
 	ui.key(tcell.KeyEnter, 0)
 	s := ui.wait(t, func(s snapshot) bool {
-		return s.memberFocus && strings.Contains(s.response, "Result:") && strings.Contains(s.response, "=qRrgsc")
+		return s.memberFocus && !s.sending && strings.Contains(s.response, "Result:") && strings.Contains(s.response, "=qRrgGsc")
 	})
-	if got := <-commands; got != "/pvServer.value=qRrgsc" {
+	if got := <-commands; got != "/pvServer.value=qRrgGsc" {
 		t.Fatalf("write: %q", got)
 	}
-	if !strings.Contains(s.response, "line 1\n[red]line 2�") {
+	if !strings.Contains(s.response, `line 1\n[red]line 2�`) {
 		t.Fatalf("response: %q", s.response)
 	}
-	ui.key(tcell.KeyRune, 's')
+	ui.key(tcell.KeyEnter, 0)
 	ui.wait(t, func(s snapshot) bool { return s.commandFocus && s.command == "" })
 	ui.key(tcell.KeyEscape, 0)
 	ui.wait(t, func(s snapshot) bool { return s.memberFocus })
@@ -75,7 +75,7 @@ func TestCombinedMemberWorkflow(t *testing.T) {
 		t.Fatalf("Esc sent %s", command)
 	default:
 	}
-	ui.key(tcell.KeyRune, 's')
+	ui.key(tcell.KeyEnter, 0)
 	ui.key(tcell.KeyEnter, 0)
 	ui.wait(t, func(s snapshot) bool {
 		return strings.Contains(s.response, `Command: /pvServer.value=""`) && !s.sending
@@ -84,21 +84,21 @@ func TestCombinedMemberWorkflow(t *testing.T) {
 		t.Fatalf("empty write: %q", got)
 	}
 	ui.key(tcell.KeyDown, 0) // Skips divider.
-	ui.wait(t, func(s snapshot) bool { return strings.Contains(s.details, "MethodHandle: -2") })
+	ui.wait(t, func(s snapshot) bool { return strings.Contains(s.details, "MethodHandle: 2") })
 	ui.key(tcell.KeyRune, 'g')
-	ui.wait(t, func(s snapshot) bool { return strings.Contains(s.status, "g/s act on properties only") })
+	ui.wait(t, func(s snapshot) bool { return strings.Contains(s.status, "g reads properties only") })
 	select {
 	case command := <-commands:
 		t.Fatalf("g invoked %s", command)
 	default:
 	}
-	ui.key(tcell.KeyRune, 'c')
+	ui.key(tcell.KeyEnter, 0)
 	ui.key(tcell.KeyEnter, 0)
 	ui.wait(t, func(s snapshot) bool { return strings.Contains(s.response, "Command: /pvServer.set()") && !s.sending })
 	if got := <-commands; got != "/pvServer.set()" {
 		t.Fatalf("method: %q", got)
 	}
-	ui.key(tcell.KeyRune, 'c')
+	ui.key(tcell.KeyEnter, 0)
 	for _, r := range `1,"hello",2` {
 		ui.key(tcell.KeyRune, r)
 	}
@@ -126,12 +126,12 @@ func TestImmediateFocusAndPendingSuppression(t *testing.T) {
 	}))
 	ui.wait(t, func(s snapshot) bool { return s.metadataLoaded })
 	ui.key(tcell.KeyTab, 0)
-	ui.key(tcell.KeyRune, 's')
+	ui.key(tcell.KeyEnter, 0)
 	ui.key(tcell.KeyEnter, 0)
 	<-started
 	ui.wait(t, func(s snapshot) bool { return s.memberFocus && s.sending })
 	ui.key(tcell.KeyRune, 'g')
-	ui.key(tcell.KeyRune, 's')
+	ui.key(tcell.KeyEnter, 0)
 	ui.wait(t, func(s snapshot) bool { return strings.Contains(s.status, "already pending") })
 	if count.Load() != 1 {
 		t.Fatal("duplicate operation sent")
@@ -144,6 +144,7 @@ func TestCombinedListAndMetadataErrors(t *testing.T) {
 	b := newBrowser(context.Background(), &fakeClient{}, "test:5002", new(logBuffer))
 	defer b.cancel()
 	b.inspectTarget = b.root
+	b.showGlobals = true
 	b.info = metadata{class: 181, properties: []member{{handle: -1, name: "value", description: "property", datatype: "t"}},
 		methods: []member{{handle: -2, name: "set", description: "method", request: "t"}}}
 	b.renderInspector()
@@ -244,7 +245,7 @@ func TestCommandCancellationAndNoReplay(t *testing.T) {
 			b.apply(r)
 		}
 	}
-	if b.sending || strings.Contains(b.response.GetText(false), "Result:") {
+	if b.sending || !strings.Contains(b.response.GetText(false), "local wait canceled") {
 		t.Fatal("old command result applied")
 	}
 	if calls.Load() != 1 {
@@ -257,11 +258,11 @@ func TestMacrosPlaceholderCancelsEdit(t *testing.T) {
 	ui := startBrowser(t, editorClient(func(context.Context, string) (string, error) { calls.Add(1); return "", nil }))
 	ui.wait(t, func(s snapshot) bool { return s.metadataLoaded })
 	ui.key(tcell.KeyTab, 0)
-	ui.key(tcell.KeyRune, 's')
+	ui.key(tcell.KeyEnter, 0)
 	ui.wait(t, func(s snapshot) bool { return s.commandFocus })
 	ui.key(tcell.KeyF2, 0)
 	ui.wait(t, func(s snapshot) bool { return s.macros && strings.Contains(s.rendered, "not implemented") })
-	ui.key(tcell.KeyRune, 's')
+	ui.key(tcell.KeyEnter, 0)
 	ui.key(tcell.KeyEnter, 0)
 	ui.key(tcell.KeyF2, 0)
 	ui.wait(t, func(s snapshot) bool { return !s.macros && !s.commandFocus })

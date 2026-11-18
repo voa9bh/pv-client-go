@@ -62,9 +62,9 @@ func TestBrowserWithTCPClient(t *testing.T) {
 			case strings.HasSuffix(string(payload), ".classHandle\x00"):
 				reply = "181\x00"
 			case strings.Contains(string(payload), ".getPropertyInfos("):
-				reply = oneProperty + "\x00"
+				reply = strings.Replace(oneProperty, "1;-1;", "1;1;", 1) + "\x00"
 			case strings.Contains(string(payload), ".getMethodInfos("):
-				reply = oneMethod + "\x00"
+				reply = strings.Replace(oneMethod, "1;-2;", "1;2;", 1) + "\x00"
 			case string(payload) == step.command:
 				index++
 			default:
@@ -140,5 +140,5 @@ func TestBrowserWithTCPClient(t *testing.T) {
 	ui.key(tcell.KeyTab, 0)
 	ui.wait(t, func(s snapshot) bool { return s.memberFocus })
 	ui.key(tcell.KeyRune, 'g')
-	ui.wait(t, func(s snapshot) bool { return strings.Contains(s.response, "Result:\n123") })
+	ui.wait(t, func(s snapshot) bool { return strings.Contains(s.response, "Result: 123") })
 }
