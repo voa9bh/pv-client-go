@@ -472,7 +472,8 @@ func (b *browser) input(event *tcell.EventKey) *tcell.EventKey {
 	if b.macroDialog {
 		return event
 	}
-	if event.Key() == tcell.KeyRune && event.Modifiers() == tcell.ModNone && !b.editing() {
+	letterShortcut := event.Key() == tcell.KeyRune && event.Modifiers() & ^tcell.ModShift == 0
+	if letterShortcut && !b.editing() {
 		switch event.Rune() {
 		case 'Q':
 			b.quit()
@@ -497,7 +498,7 @@ func (b *browser) input(event *tcell.EventKey) *tcell.EventKey {
 		b.memberAction('\n')
 		return nil
 	}
-	if !b.macros && b.table.HasFocus() && event.Key() == tcell.KeyRune && event.Modifiers() == tcell.ModNone {
+	if !b.macros && b.table.HasFocus() && letterShortcut {
 		switch event.Rune() {
 		case 'g':
 			b.memberAction('g')
@@ -533,8 +534,7 @@ func (b *browser) input(event *tcell.EventKey) *tcell.EventKey {
 		}
 		return nil
 	}
-	switch event.Rune() {
-	case 'r':
+	if letterShortcut && event.Rune() == 'r' {
 		b.refreshSelected()
 		return nil
 	}

@@ -143,6 +143,8 @@ Use Tab/Shift+Tab to focus its buttons, Enter to activate, or click with the mou
 Objects offers Refresh/Get/Set/Call/Globals; Macros offers Run/Stop/Load/Save.
 Both include Switch/Port/Reconnect/Quit. Focusing a button does not execute it.
 Lowercase `q` never quits; `Q`, `P`, `R`, and `s` remain ordinary text in editors.
+Letter shortcuts accept Shift as reported by Windows consoles, preserving case;
+Ctrl/Alt combinations do not trigger these letter actions.
 
 `P Port` opens a prompt prefilled with the current port (decimal 1..65535).
 Enter/Connect switches; Esc/Cancel leaves the connection unchanged. Switching
